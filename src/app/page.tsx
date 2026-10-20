@@ -35,7 +35,7 @@ export default function Home() {
           <div className="shell hero-grid">
             <div className="hero-copy">
               <p className="eyebrow">SAMPLE LP / DESIGN SYSTEM TEST</p>
-              <h1 id="hero-title">「伝わる」を、<br /><em>設計する。</em></h1>
+              <h1 id="hero-title"><span className="hero-heading-line">「伝わる」を、</span><em className="hero-heading-line">設計する。</em></h1>
               <p className="hero-lead">店舗の魅力を、正確な情報と美しい体験で届ける。その第一歩を検証するためのデモページです。</p>
               <a className="button" href="#principles">制作方針を見る <span aria-hidden="true">↗</span></a>
               <p className="hero-note">※ 架空の制作環境確認用ページです。実在店舗の広告・予約ページではありません。</p>
