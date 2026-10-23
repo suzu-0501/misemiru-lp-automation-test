@@ -112,6 +112,33 @@ class DetailedSpecTests(unittest.TestCase):
         self.assertTrue(any("具体的な点数" in e for e in errs))
         self.assertTrue(any("減点" in e for e in errs))
 
+    def test_repair_creates_backup_and_keeps_approval_absent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            p = dp.case_paths(root)
+            dp.save_json(p["case"], self.case)
+            dp.save_text(p["requirements"], "original unapproved draft")
+            dp.save_text(p["req_quality"], '{"status":"修正必要"}')
+            dp.save_text(root / "requirements_chapter_01.md", "old chapter")
+            with patch.object(dp, "draft_stage", return_value={"status": "修正必要"}) as mock:
+                result = dp.repair_demo_requirements(root)
+            self.assertEqual("修正必要", result["status"])
+            self.assertEqual("original unapproved draft", (root / "backup_before_repair" / "requirements_draft.md").read_text())
+            self.assertEqual("old chapter", (root / "backup_before_repair" / "requirements_chapter_01.md").read_text())
+            self.assertFalse(p["approval"].exists())
+            mock.assert_called_once()
+
+    def test_repair_rejects_previous_human_approval(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            p = dp.case_paths(root)
+            dp.save_json(p["case"], self.case)
+            dp.save_text(p["requirements"], "do not overwrite")
+            dp.save_json(p["approval"], {"reviewer": "human"})
+            with self.assertRaisesRegex(RuntimeError, "承認記録"):
+                dp.repair_demo_requirements(root)
+            self.assertEqual("do not overwrite", p["requirements"].read_text())
+
     def test_old_passing_qa_is_rejected_on_audit(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
