@@ -222,21 +222,54 @@ def make_prompt(stage, group, case, approved_requirements=""):
         "\nこれは正式な承認済み文書ではなく、検証用ドラフトである。"
     )
 
-def build_chapter(stage, group, case, approved_requirements=""):
-    prompt = make_prompt(stage, group, case, approved_requirements)
-    content = model_reply(SYSTEM, prompt)
-    issues = check_chapter(content, group[1], case)
-    if issues:
-        # One bounded repair attempt; never silently claim success.
-        repair_prompt = (
-            prompt + "\n\n前回の出力：\n" + content[:11000] +
-            "\n\n以下の問題をすべて修正し、該当章を見出しから書き直してください：\n" +
-            "\n".join("- " + x for x in issues) +
-            "\nデータがない場合は必ず未確認と書く。数値や住所を創作しない。"
+def generate_section(stage, chapter_id, section_index, title, case, approved_requirements=""):
+    """Generate one section. The program owns its heading; LLM cannot omit it."""
+    base_prompt = make_prompt(
+        stage, (chapter_id, (title,)), case, approved_requirements
+    )
+    # Content under each heading should remain a verified draft, not approval.
+    prior_issues = []
+    for attempt in range(3):
+        prompt = (
+            base_prompt +
+            "\n注意：見出しはプログラムが付けるため、本文のみ作成してください。" +
+            "\n『シート確認済』『公式サイト確認済』『調査済』の語句は例示・引用でも出力禁止。" +
+            "\n入力されていない店舗固有値は明確に未確認としてください。" +
+            "\n実在の店舗情報がないことを冒頭で明示してください。" +
+            "\n根拠のないターゲット像・ブランド説明・画像は提案として区別してください。" +
+            ("\n前回の検査で次の問題が出たため、文章全体を作り直してください：\n" +
+             "\n".join("- " + issue for issue in prior_issues) if prior_issues else "")
         )
-        content = model_reply(SYSTEM, repair_prompt)
-        issues = check_chapter(content, group[1], case)
-    return content, issues
+        answer = model_reply(SYSTEM, prompt, predict=1800)
+        # Normalize user-generated H2s to lower-level headings; the H2 is fixed.
+        answer = re.sub(r"(?m)^#{1,2}\\s+", "### ", answer).strip()
+        content = "## " + title + "\n\n" + answer + "\n"
+        prior_issues = check_grounding(content, case)
+        if len(answer) < 220:
+            prior_issues.append("セクション本文が220文字未満")
+        if not prior_issues:
+            return content, []
+    return content, prior_issues
+
+
+def build_chapter(stage, group, case, approved_requirements=""):
+    chapter_id, titles = group
+    contents = []
+    errors = []
+    for section_index, title in enumerate(titles, start=1):
+        print("  セクション生成：" + title, flush=True)
+        subsection, problems = generate_section(
+            stage, chapter_id, section_index, title, case, approved_requirements
+        )
+        if problems:
+            errors.extend([title + ": " + x for x in problems])
+            # Exclude unsafe content from the accepted chapter.
+        else:
+            contents.append(subsection)
+    result = "\n\n".join(contents)
+    if not errors:
+        errors.extend(check_chapter(result, titles, case))
+    return result, errors
 
 def evaluate_document(stage, text, case):
     """Automated critique is advisory; never automatically approve."""
