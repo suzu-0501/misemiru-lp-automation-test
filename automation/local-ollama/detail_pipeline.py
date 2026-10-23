@@ -182,6 +182,92 @@ def check_grounding(text: str, case: dict):
         errors.append("写真・ロゴの許諾を確認済みと断定")
     return sorted(set(errors))
 
+def audit_claims(text: str, case: dict):
+    """Conservative factual consistency checks, not verification of truth."""
+    errors = list(check_grounding(text, case))
+    lines = text.splitlines()
+    for i, line in enumerate(lines, 1):
+        if re.search(r"(?:【F001】|\bF001\b)", line):
+            if re.search(r"住所|営業時間|定休日|予約|取り置き|メニュー|写真|画像|ロゴ|権利|利用許可|公開|承認|CTA|税込|出典ID.*全|すべての情報|地図|Instagram", line):
+                if not re.search(r"(?:F001.{0,8}店名|F001.{0,8}仮の店名|店名.{0,15}F001|仮の店名.{0,15}F001)", line):
+                    errors.append("行" + str(i) + "：F001は仮の店名のみの根拠。別の主張を裏付けられません")
+        if re.search(r"承認済", line) and not re.search(r"未承認|承認済み?ではな|承認済み?でない", line):
+            errors.append("行" + str(i) + "：承認済という主張を裏付ける承認記録がありません")
+        if re.search(r"今すぐ予約", line) and re.search(r"主CTA|ボタンを設置", line):
+            if not re.search(r"禁止|NG|設置しない|不使用|避け|変更", line):
+                errors.append("行" + str(i) + "：未確認の予約機能をCTAとして指定")
+        if re.search(r"生成画像.{0,14}(?:採用|使用|許可|利用|使用可)", line):
+            if re.search(r"(?:のみを?採用|のみ使用|許可する|利用可|使用可|採用可否.{0,8}はい)", line):
+                if not case.get("assets") and case["authorization"].get("image_rights") == "no-real-images":
+                    errors.append("行" + str(i) + "：許可のない生成画像を採用済・使用可と扱っています")
+        if re.search(r"税込価格として表示する", line):
+            errors.append("行" + str(i) + "：税区分未確認なのに税込表示を確定")
+    estimated = []
+    for line in lines:
+        match = re.search(r"^\|\s*[^|]+\|\s*[ABC]\s*\|\s*(\d+(?:\.\d+)?)\s*時間\s*\|", line)
+        if match:
+            estimated.append(float(match.group(1)))
+    if estimated and sum(estimated) > 4.0:
+        errors.append("作業工数の合計が" + format(sum(estimated), ".1f") + "時間で、4時間の制作目標を超過")
+    guessed = set(re.findall(r"\x60(/[a-z0-9][a-z0-9-]{1,40}/)\x60", text))
+    if guessed:
+        errors.append("GitHub Pagesの公開サブパスが未確認なのに具体値を指定：" + ", ".join(sorted(guessed)))
+    if len(guessed) > 1:
+        errors.append("同じ案件に矛盾する公開パスが複数あります")
+    return list(dict.fromkeys(errors))
+
+
+def audit_document(stage: str, content: str, case: dict, review_text: str = ""):
+    issues = audit_claims(content, case)
+    for header in required_headers(stage):
+        if not re.search(r"(?m)^##\s+" + re.escape(header) + r"\s*$", content):
+            issues.append("必須見出しが不在：" + header)
+    if review_text:
+        for role in ("PM・運用審査", "Webデザイナー兼フロントエンド審査"):
+            if role not in review_text:
+                issues.append("品質レビューの役割が欠落：" + role)
+        if not re.search(r"(?:\d{1,3}\s*/\s*100|\d{1,3}\s*点)", review_text):
+            issues.append("AIレビューに100点満点の具体的な点数がありません")
+        if not re.search(r"(?:減点|重大(?:な)?(?:欠陥|問題)|問題箇所|改善点)", review_text):
+            issues.append("AIレビューに具体的な減点・問題点がありません")
+    return list(dict.fromkeys(issues))
+
+
+def audit_existing(root: Path):
+    """Re-check an existing draft without generating or modifying the draft."""
+    paths = case_paths(root)
+    if not paths["requirements"].exists():
+        raise RuntimeError("既存の要件定義書がありません")
+    case = read_json(paths["case"])
+    only_fictional(case)
+    draft = paths["requirements"].read_text(encoding="utf-8")
+    review_file = root / "requirements_ai_reviews.md"
+    reviews = review_file.read_text(encoding="utf-8") if review_file.exists() else ""
+    issues = audit_document("requirements", draft, case, reviews)
+    if not reviews:
+        issues.append("AIの評価ファイルが存在しません")
+    report = {
+        "kind": "requirements", "status": "修正必要" if issues else "構造検査済・根拠確認待ち",
+        "automatic_approval": False,
+        "draft_sha256": sha256(draft),
+        "missing_or_unsafe": issues[:100],
+        "reviewed_at": datetime.now().astimezone().isoformat(),
+        "method": "ローカルルールによる再監査・生成なし",
+        "warning": "店舗事実・権利・運用の真実性は人間の確認が必要",
+    }
+    if paths["req_quality"].exists():
+        backup = root / "requirements_qa_previous.json"
+        if not backup.exists():
+            save_text(backup, paths["req_quality"].read_text(encoding="utf-8"))
+    save_json(paths["req_quality"], report)
+    print("既存ドラフトの再監査完了（AI呼び出し・Sheets・GitHub更新なし）")
+    print("判定：" + report["status"] + " / 指摘：" + str(len(issues)) + "件")
+    print("レポート：" + str(paths["req_quality"]))
+    for issue in issues[:14]:
+        print(" - " + issue)
+    return report
+
+
 def required_headers(stage: str):
     return [title for _, group in CHAPTERS[stage] for title in group]
 
@@ -334,7 +420,7 @@ def draft_stage(stage, root: Path):
         "人間の承認前に公開・送信・実装へ進まないでください。\n\n" +
         "\n\n".join(chunks) + "\n"
     )
-    all_issues = check_grounding(draft, case)
+    all_issues = audit_claims(draft, case)
     for header in required_headers(stage):
         if not re.search(r"(?m)^##\s+" + re.escape(header) + r"\s*$", draft):
             all_issues.append("必須見出しが不在：" + header)
@@ -385,6 +471,9 @@ def approve_requirements(root: Path):
     if not path["requirements"].exists() or not path["req_quality"].exists():
         raise RuntimeError("要件定義書が未作成です。")
     q = read_json(path["req_quality"])
+    freshly_checked = audit_document("requirements", path["requirements"].read_text(encoding="utf-8"), read_json(path["case"]))
+    if freshly_checked:
+        raise RuntimeError("承認停止：矛盾・出典不備：" + "; ".join(freshly_checked[:5]))
     if q.get("missing_or_unsafe") or q.get("status") != "人間の承認待ち":
         raise RuntimeError("要件定義書に安全検査未合格の章があります。人間の承認前に修正が必要です。")
     current = path["requirements"].read_text(encoding="utf-8")
@@ -419,6 +508,7 @@ def main():
     action.add_argument("--approve-demo-requirements", action="store_true")
     action.add_argument("--demo-design", action="store_true")
     action.add_argument("--status", action="store_true")
+    action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
     args = parser.parse_args()
     try:
         ensure_demo(ROOT)
@@ -428,6 +518,8 @@ def main():
             approve_requirements(ROOT)
         elif args.demo_design:
             draft_stage("design", ROOT)
+        elif args.audit_existing:
+            audit_existing(ROOT)
         else:
             print("保存先：", ROOT)
             for key, val in case_paths(ROOT).items():
