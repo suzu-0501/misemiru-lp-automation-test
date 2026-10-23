@@ -69,6 +69,72 @@ class DetailedSpecTests(unittest.TestCase):
         self.assertNotIn("東京都渋谷区", draft)
         self.assertEqual(6, m.call_count)
 
+    def test_uploaded_draft_false_approval_regression(self):
+        sample = (
+            "| 生成画像の採用可否 | 承認済 | 【F001】 |\n"
+            "| GitHub Pagesの静的公開 | 承認済 | 【F001】 |\n"
+        )
+        errs = dp.audit_claims(sample, self.case)
+        self.assertTrue(any("承認記録" in e for e in errs))
+        self.assertTrue(any("F001" in e for e in errs))
+
+    def test_uploaded_draft_unsupported_cta_regression(self):
+        sample = "| 売場の主CTA | 「今すぐ予約」ボタンを設置 | 未確認（要質問） |\n"
+        errs = dp.audit_claims(sample, self.case)
+        self.assertTrue(any("予約機能" in e for e in errs))
+
+    def test_budget_table_sum_overrun(self):
+        sample = (
+            "| 実装 | A | 4時間 | 注記 |\n"
+            "| 公開 | A | 2時間 | 注記 |\n"
+            "| 画像 | B | 4時間 | 注記 |\n"
+            "| 修正 | C | 1時間 | 注記 |\n"
+            "| 引き渡し | C | 2時間 | 注記 |\n"
+            "| その他 | C | 2時間 | 注記 |\n"
+        )
+        errs = dp.audit_claims(sample, self.case)
+        self.assertTrue(any("15.0時間" in e for e in errs))
+
+    def test_inconsistent_invented_paths(self):
+        sample = "サブパス \x60/ao/\x60 と \x60/aogaro/\x60"
+        errs = dp.audit_claims(sample, self.case)
+        self.assertTrue(any("矛盾する公開パス" in e for e in errs))
+
+    def test_invalid_image_permissions_regression(self):
+        sample = "本案件では生成画像を許可する。\n"
+        errs = dp.audit_claims(sample, self.case)
+        self.assertTrue(any("生成画像" in e for e in errs))
+
+    def test_ai_summary_is_not_quality_assessment(self):
+        text = "\n".join("## " + t for t in dp.required_headers("requirements"))
+        review = "## PM・運用審査\n構成を紹介。\n## Webデザイナー兼フロントエンド審査\n要約のみ。"
+        errs = dp.audit_document("requirements", text, self.case, review)
+        self.assertTrue(any("具体的な点数" in e for e in errs))
+        self.assertTrue(any("減点" in e for e in errs))
+
+    def test_old_passing_qa_is_rejected_on_audit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            p = dp.case_paths(root)
+            dp.save_json(p["case"], self.case)
+            draft = (
+                "## " + "\n\n## ".join(dp.required_headers("requirements")) +
+                "\n| 生成画像の採用可否 | 承認済 | 【F001】 |\n"
+            )
+            dp.save_text(p["requirements"], draft)
+            dp.save_json(p["req_quality"], {
+                "status": "人間の承認待ち", "missing_or_unsafe": []
+            })
+            dp.save_text(root / "requirements_ai_reviews.md", "要約のみ")
+            r = dp.audit_existing(root)
+            self.assertEqual("修正必要", r["status"])
+            self.assertEqual(draft, p["requirements"].read_text())
+            self.assertTrue((root / "requirements_qa_previous.json").exists())
+            self.assertTrue(dp.read_json(p["req_quality"])["missing_or_unsafe"])
+            with patch("builtins.input", return_value="承認する"):
+                with self.assertRaisesRegex(RuntimeError, "承認"):
+                    dp.approve_requirements(root)
+
     def test_design_cannot_start_without_human_approval(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -92,7 +158,7 @@ class DetailedSpecTests(unittest.TestCase):
     def test_existing_chapters_resume_and_review_only(self):
         def fake_model(system, user, predict=1800):
             if "審査役：" in user:
-                return "審査結果：未確認事項が多いため人間の確認が必要。" * 25
+                return "暫定点数：50/100。重大問題：事実・権利が未確認。減点箇所：根拠がない。" * 25
             # The generator now asks for each section's body separately.
             return "これは架空の案件です。確認済みの実店舗情報はありません。" + (
                 "確定できない情報は未確認として質問に残し、"
