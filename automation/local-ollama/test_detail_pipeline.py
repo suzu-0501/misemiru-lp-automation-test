@@ -182,12 +182,13 @@ class DetailedSpecTests(unittest.TestCase):
             root = Path(folder)
             paths = dp.case_paths(root)
             dp.save_json(paths["case"], self.case)
-            dp.save_text(paths["requirements"], "人間が確認した架空仕様")
+            valid_draft = "人間が確認した架空仕様\n" + "\n".join("## " + h for h in dp.required_headers("requirements"))
+            dp.save_text(paths["requirements"], valid_draft)
             dp.save_json(paths["req_quality"], {
                 "status": "人間の承認待ち", "missing_or_unsafe": []})
             with patch("builtins.input", return_value="承認する"):
                 dp.approve_requirements(root)
-            self.assertEqual("人間が確認した架空仕様", dp.approved_req(root))
+            self.assertEqual(valid_draft, dp.approved_req(root))
 
 if __name__ == "__main__":
     unittest.main()
