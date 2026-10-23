@@ -242,7 +242,7 @@ def generate_section(stage, chapter_id, section_index, title, case, approved_req
         )
         answer = model_reply(SYSTEM, prompt, predict=1800)
         # Normalize user-generated H2s to lower-level headings; the H2 is fixed.
-        answer = re.sub(r"(?m)^#{1,2}\\s+", "### ", answer).strip()
+        answer = re.sub(r"(?m)^#{1,2}\s+", "### ", answer).strip()
         content = "## " + title + "\n\n" + answer + "\n"
         prior_issues = check_grounding(content, case)
         if len(answer) < 220:
