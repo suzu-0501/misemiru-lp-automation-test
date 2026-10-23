@@ -445,6 +445,10 @@ def draft_stage(stage, root: Path):
             evaluation = evaluate_document(stage, draft, case)
             save_text(root / (stage + "_ai_reviews.md"), evaluation)
             results["review_file"] = stage + "_ai_reviews.md"
+            reviewed_issues = audit_document(stage, draft, case, evaluation)
+            if reviewed_issues:
+                results["status"] = "修正必要"
+                results["missing_or_unsafe"] = sorted(set(reviewed_issues))
         except RuntimeError as e:
             results["review_error"] = str(e)
             results["status"] = "修正必要"
