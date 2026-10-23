@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import sys
 from urllib.error import HTTPError, URLError
@@ -37,6 +38,9 @@ PROMPT_RULES = """あなたはミセミルWebのLP要件定義専門アシスタ
 URLを閲覧・検証する機能はありません。ネット上の情報を確認したふりをしないでください。
 実在店舗の価格・営業時間・メニュー・写真利用権・予約URLなどを捏造しないでください。
 情報の出典・確認日が曖昧な場合は未確認事項として扱ってください。
+資料に存在しない所在地・営業時間・定員・内装・メニュー・ターゲット像を創作しないこと。
+『シート確認済』『公式サイトで確認済』など、参照できない出典を確認したと断言しないこと。
+仮説や提案は必ず『提案』『未確認』と明示し、確認された店舗固有事実と混ぜないこと。
 HTML/CSS/JavaScriptの実装や画像生成は実行しないでください。
 回答は要件定義書の「未承認ドラフト」として日本語で作成してください。
 見出し：目的／想定顧客／確認済情報と出典／未確認事項と質問／セクション・CTA／
@@ -73,12 +77,44 @@ def ollama_chat(prompt: str) -> str:
         raise RuntimeError("Ollamaから文章が返されませんでした。シートは変更しません。")
     return text
 
+def validate_grounding(text: str, supplied_text: str) -> None:
+    """Fail closed on common unsupported factual claims.
+
+    Heuristic protection, not a proof of truth: a human must still review.
+    Never claim that merely reading a queue prompt verifies an external source.
+    """
+    if re.search(r"(?:シート|公式サイト|食べログ|Googleマップ).{0,8}(?:確認済|確認した|調査済)", text):
+        raise RuntimeError("AIが情報源を確認したと断言しました。出典未確認のため保存・合格を中止します。")
+    # Specific times, capacities and Japanese addresses should appear verbatim
+    # in provided evidence. If not, treat as suspected fabrication.
+    patterns = [
+        r"(?<!\d)\d{1,2}[:：]\d{2}(?:\s*[〜~～-]\s*\d{1,2}[:：]\d{2})?",
+        r"\d{1,3}\s*(?:席|名|坪)(?!称)",
+        r"(?:東京都|北海道|大阪府|京都府|[\u4e00-\u9fff]{2,4}県)[\u4e00-\u9fff0-9-]{0,12}",
+    ]
+    suspects = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            item = match.group(0).strip()
+            if item not in supplied_text:
+                suspects.append(item)
+    if suspects:
+        raise RuntimeError(
+            "入力に存在しない具体的な店舗情報を検出：" +
+            ", ".join(sorted(set(suspects))[:6]) +
+            "。生成結果を保存しません。"
+        )
+
 def test_local():
-    fictional = ("架空の店舗『架空喫茶アオ』のLP要件定義書の見出し案を作成。"
-                 "実在店舗の情報は使わず、未確認情報を推測しないこと。"
-                 "来店導線、スマホ対応、写真利用許可を明確にすること。")
+    fictional = ("架空の店舗『架空喫茶アオ』のLP要件定義に向けて、"
+                 "所在地・営業時間・座席数・内装・メニューなどは一切入力されていません。"
+                 "店舗固有の確認済み事実はゼロです。"
+                 "確認済みと断言せず、不足情報の質問と一般的な設計方針だけを作成してください。"
+                 "来店導線、スマホ対応、写真利用許可を質問に含めてください。")
+    print("ローカルモデル接続：実行中（今回はGoogle Sheetsを参照しません）")
     text = ollama_chat(fictional)
-    print("ローカルモデル動作：成功")
+    validate_grounding(text, fictional)
+    print("ローカルモデル動作：成功（簡易根拠検査に合格）")
     print("生成文字数：", len(text))
     print("冒頭の確認用抜粋：")
     print(text[:450])
@@ -186,6 +222,7 @@ def run_sheet_once(write: bool):
     # Safe maximum: one case per run; re-check permission and empty draft before writing.
     sheet_row, store_id, prompt = jobs[0]
     generated = ollama_chat(prompt)
+    validate_grounding(generated, prompt)
     current = sheet_rows(service, spreadsheet_id)
     refreshed_jobs, _ = eligible_jobs(current)
     if (sheet_row, store_id, prompt) not in refreshed_jobs:
