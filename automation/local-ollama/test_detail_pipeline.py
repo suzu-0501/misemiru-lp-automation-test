@@ -56,7 +56,7 @@ class DetailedSpecTests(unittest.TestCase):
             )
         self.assertEqual([], issues)
         for title in dp.CHAPTERS["requirements"][0][1]:
-            self.assertIn("## " + title + "\\n", draft)
+            self.assertIn("## " + title + "\n", draft)
 
     def test_unsafe_generated_section_rejected(self):
         def fake_assertion(system, user, predict=1800):
@@ -107,7 +107,7 @@ class DetailedSpecTests(unittest.TestCase):
                 self.assertEqual(6, first["chapters"])
                 second = dp.draft_stage("requirements", root)
                 self.assertEqual("人間の承認待ち", second["status"])
-                self.assertTrue(model.call_count <= 10)  # six chapters once, reviews twice per run
+                self.assertEqual(16, model.call_count)  # 12 sections once + 2 reviews on each run
             self.assertFalse(dp.case_paths(root)["approval"].exists())
             self.assertFalse(dp.case_paths(root)["design"].exists())
 
