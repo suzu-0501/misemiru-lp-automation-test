@@ -45,6 +45,30 @@ class DetailedSpecTests(unittest.TestCase):
         errors = dp.check_chapter("短い", dp.CHAPTERS["requirements"][0][1], self.case)
         self.assertTrue(any("見出し欠落" in x for x in errors))
 
+
+    def test_each_section_heading_is_code_controlled(self):
+        def answer_without_heading(system, user, predict=1800):
+            return ("未確認事項は質問する。観測していない情報を確認済みと書かない。"
+                    "権利と情報の整合性を確認する。" * 18)
+        with patch.object(dp, "model_reply", side_effect=answer_without_heading):
+            draft, issues = dp.build_chapter(
+                "requirements", dp.CHAPTERS["requirements"][0], self.case
+            )
+        self.assertEqual([], issues)
+        for title in dp.CHAPTERS["requirements"][0][1]:
+            self.assertIn("## " + title + "\\n", draft)
+
+    def test_unsafe_generated_section_rejected(self):
+        def fake_assertion(system, user, predict=1800):
+            return "店舗所在地は東京都渋谷区で公式サイト確認済です。" * 30
+        with patch.object(dp, "model_reply", side_effect=fake_assertion) as m:
+            draft, issues = dp.build_chapter(
+                "requirements", dp.CHAPTERS["requirements"][0], self.case
+            )
+        self.assertTrue(issues)
+        self.assertNotIn("東京都渋谷区", draft)
+        self.assertEqual(6, m.call_count)
+
     def test_design_cannot_start_without_human_approval(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -67,11 +91,13 @@ class DetailedSpecTests(unittest.TestCase):
 
     def test_existing_chapters_resume_and_review_only(self):
         def fake_model(system, user, predict=1800):
-            for _, headings in dp.CHAPTERS["requirements"]:
-                if all("## " + x in user for x in headings):
-                    return "\n\n".join("## " + x + "\n" +
-                                      "未確認事項の質問と設計提案。"*40 for x in headings)
-            return "重大問題：未知のデータは未確認。人間のレビューが必要。"
+            if "審査役：" in user:
+                return "審査結果：未確認事項が多いため人間の確認が必要。" * 25
+            # The generator now asks for each section's body separately.
+            return "これは架空の案件です。確認済みの実店舗情報はありません。" + (
+                "確定できない情報は未確認として質問に残し、"
+                "動作やアクセシビリティは設計提案として扱います。" * 15
+            )
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             dp.save_json(dp.case_paths(root)["case"], self.case)
