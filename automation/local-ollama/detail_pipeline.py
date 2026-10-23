@@ -462,6 +462,37 @@ def draft_stage(stage, root: Path):
     print("重大な未確認は確認票に残す。自動公開・GitHub変更・Sheets書き込み：なし")
     return results
 
+def repair_demo_requirements(root: Path):
+    """Back up local artifacts, then selectively regenerate unsafe chapters.
+
+    The existing draft is never approved or published by this function.
+    Only files under ROOT are inspected; no external account access.
+    """
+    paths = case_paths(root)
+    case = read_json(paths["case"])
+    only_fictional(case)
+    if paths["approval"].exists():
+        raise RuntimeError("人間の承認記録があるため、自動再生成を停止しました。承認履歴を確認してください。")
+    if not paths["requirements"].exists():
+        raise RuntimeError("再生成元の要件定義書がありません。まず --demo-requirements を実行してください。")
+    backup_root = root / "backup_before_repair"
+    backup_root.mkdir(parents=True, exist_ok=True)
+    candidates = [
+        root / "requirements_draft.md",
+        root / "requirements_qa.json",
+        root / "requirements_ai_reviews.md",
+    ] + sorted(root.glob("requirements_chapter_*.md"))
+    for candidate in candidates:
+        if candidate.is_file():
+            dest = backup_root / candidate.name
+            if not dest.exists():
+                save_text(dest, candidate.read_text(encoding="utf-8"))
+    print("既存ドラフトのバックアップ：" + str(backup_root), flush=True)
+    result = draft_stage("requirements", root)
+    print("再生成後の判定：" + str(result["status"]), flush=True)
+    return result
+
+
 def approved_req(root: Path):
     path = case_paths(root)
     if not path["requirements"].exists() or not path["approval"].exists():
@@ -517,6 +548,7 @@ def main():
     action.add_argument("--demo-design", action="store_true")
     action.add_argument("--status", action="store_true")
     action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
+    action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
     args = parser.parse_args()
     try:
         ensure_demo(ROOT)
@@ -528,6 +560,8 @@ def main():
             draft_stage("design", ROOT)
         elif args.audit_existing:
             audit_existing(ROOT)
+        elif args.repair_demo_requirements:
+            repair_demo_requirements(ROOT)
         else:
             print("保存先：", ROOT)
             for key, val in case_paths(ROOT).items():
