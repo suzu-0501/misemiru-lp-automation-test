@@ -574,6 +574,7 @@ def main():
     action.add_argument("--approve-demo-requirements", action="store_true")
     action.add_argument("--demo-design", action="store_true")
     action.add_argument("--status", action="store_true")
+    action.add_argument("--check-model", action="store_true", help="短いローカル生成を新しい通信方式でテスト")
     action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
     action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
     args = parser.parse_args()
@@ -585,6 +586,8 @@ def main():
             approve_requirements(ROOT)
         elif args.demo_design:
             draft_stage("design", ROOT)
+        elif args.check_model:
+            print("Ollamaストリーミング接続テスト：", model_reply("短く答えてください。", "接続テスト成功とだけ答えてください。", predict=32))
         elif args.audit_existing:
             audit_existing(ROOT)
         elif args.repair_demo_requirements:
