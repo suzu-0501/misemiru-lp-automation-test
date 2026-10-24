@@ -640,6 +640,85 @@ def restore_demo_photo_ledger(root: Path):
     return repair_demo_requirements(root, allow_generation=False)
 
 
+def demo_copy_outline_template(case: dict) -> str:
+    """Safe copy and page-structure requirements for a name-only fictional demo."""
+    only_fictional(case)
+    if case.get("assets") or len(case.get("facts", [])) != 1 or \
+            case["facts"][0].get("id") != "F001":
+        raise RuntimeError("既知の店舗事実や画像が追加されている場合、固定コピーを適用しません。")
+    return """## セクション構成・コピー・NG表現
+
+### 前提と編集方針
+これは「架空喫茶アオ」という仮の店名だけが入力された架空テスト案件である。店舗の所在地・営業時間・定休日・メニュー・価格・予約可否・写真・ロゴ・ブランド思想・顧客層・アクセス方法は確認されていない。以下は取材・確認のためのページ構成案であり、実店舗の事実ではない。実情報が入るまでは「仮案」「未確認」「要質問」を区別し、未確定の事柄を顧客向け本文に確定的に記述しない。
+
+### ページ全体のセクション構成案
+| 並び順 | セクション | 目的と内容（確定前の設計案） | 公開前に必要な根拠 |
+|---|---|---|---|
+| 01 | Hero | 仮の店名と、ページがテスト用である旨。撮影素材は現時点で掲載しない | 正式な店名、第一印象、写真の権利 |
+| 02 | Concept | 店舗の特徴・経営者の言葉を一次資料に基づいて伝える枠 | 店舗の実際の魅力・取材記録 |
+| 03 | Menu | 現行商品を分類し、税込区分と提供条件を併記するための枠 | メニュー原本、価格、販売期間 |
+| 04 | Space | 店内の雰囲気や利用上の条件を案内するための枠 | 席・設備・写真と権利 |
+| 05 | Visit Guide | 初回来店前の疑問をまとめる枠。予約・取り置きは未確認として扱う | 店舗の実際の運用 |
+| 06 | Access | 所在地・行き方・営業時間と定休日を提供するための枠 | 正式住所、地図・公式掲載先 |
+| 07 | Footer | 連絡先、更新元、注意事項を整理する枠 | 連絡手段・所有権と更新担当 |
+
+これは固定的な掲載指示ではない。根拠が得られないセクションはページから省略するか、社内検証用の空欄として扱う。各セクションの順序や有無は、店舗が伝えたい価値と実資料の量を確認した後に見直す。
+
+### コピー原稿の管理方法
+コピー1文ごとに、原文、出典ID、情報源URLまたは店舗からの確認記録、確認日、更新担当、表示予定箇所、文面ステータス、最終確認者を対応させる。入力がない箇所では、本文を捏造せず質問票に登録する。取材前の言い回しの方向性は編集提案として別欄に保存し、店舗の公式発言としては扱わない。
+
+| コピーの役割 | 内部検討用の仮文面 | 状態・掲載条件 |
+|---|---|---|
+| Heroの名称 | 架空喫茶アオ | 架空検証用の仮名。実店舗として一般公開しない |
+| Heroの補助文 | 店舗の詳細情報は確認中です | 内部検証の説明文。正式な訴求文ではない |
+| Concept | 店舗の特徴を聞き取って作成する | 取材待ち。内容の創作禁止 |
+| Menu | 正式メニューを受領後に掲載する | 原本待ち。商品名・価格を創作しない |
+| Access | 正式住所・営業時間を確認後に掲載する | 確認待ち。架空住所を掲載しない |
+
+### CTAと遷移の要件
+主CTAと副CTAは、店舗の実際の目的、予約・取り置きの可否、公式サイト・公式Instagram・連絡先の検証結果を踏まえ、事前に人間が決める。遷移先が未確認ならリンクや送信ボタンは作動させない。特に席予約や取り置きが可能であるかのような行動を誘導しない。外部リンクには公式性の確認と公開可否の審査が必要で、仮URLを埋め込まない。
+
+### NG表現と誤認防止
+- 実際に確認できていない人気、売上、口コミ、評価、席数、アクセス、営業時間、営業日、商品価格を断定しない。
+- 店舗の許可がない写真やロゴを使わず、生成画像を実店舗の実写と誤認させない。
+- 予約・取り置き・オンライン注文の提供状況を確認せずにボタンを設置しない。
+- 店舗が確認していないサービス、設備、メニュー、ブランドの歴史、経営者の言葉を創作しない。
+- 「第三者サイトに載っていた」という理由だけで店舗の一次情報より優先しない。情報が矛盾する場合は確認票に差分を記録する。
+- 承認の記録がない文章・画像・ページ構成を、確定済みの素材や正式仕様として扱わない。
+
+### レスポンシブ設計と実装引き継ぎ
+PCとモバイルでは読み順、見出しの視認性、本文の行長、タップしやすさ、写真の有無によるレイアウト変化を確認する。キーボード操作、見出し階層、文字拡大、画像がない場合の情報伝達、通信失敗時の表示も確認対象とする。デザインの寸法値や画像比率はここで検証済みとせず、後続のデザイン案・実機QAで決定する。
+
+### 検査条件・確認質問と停止ゲート
+セクションごとに「事実の出典」「素材の権利」「使用可能な情報」「更新条件」「CTA遷移先」の欄が未確認のままなら、対外的な確定コピーとして扱わない。店舗担当者へ、客層・訴求したい価値、商品と季節変更、来店前に必要な案内、予約・取り置き、公式リンク、写真利用条件を確認する。実データ・契約・素材・デザインの承認と一般公開については、AIの文章生成と品質検査だけで完了扱いにしない。
+"""
+
+
+def restore_demo_copy_outline(root: Path):
+    """Fill only missing unsafe copy-outline section and keep photo ledger intact."""
+    paths = case_paths(root)
+    case = read_json(paths["case"])
+    only_fictional(case)
+    if paths["approval"].exists() or not paths["requirements"].exists():
+        raise RuntimeError("承認記録があるか、ドラフトがないため書き込みを停止しました。")
+    text = demo_copy_outline_template(case)
+    if audit_claims(text, case):
+        raise RuntimeError("コピー構成テンプレートの検査に失敗しました。")
+    filename = root / "requirements_section_04_1.md"
+    if filename.exists():
+        previous = filename.read_text(encoding="utf-8")
+        if len(previous) >= 250 and not audit_claims(previous, case):
+            print("安全な既存コピーセクションを保持します。", flush=True)
+            return repair_demo_requirements(root, allow_generation=False)
+        backup = root / ("requirements_section_04_1_before_template_" +
+                         datetime.now().strftime("%Y%m%d_%H%M%S") + ".md")
+        save_text(backup, previous)
+        print("不合格セクションを保存：" + str(backup), flush=True)
+    save_text(filename, text)
+    print("第4章のコピー構成のみを安全な設計案で補完しました。写真素材台帳は変更しません。", flush=True)
+    return repair_demo_requirements(root, allow_generation=False)
+
+
 def approved_req(root: Path):
     path = case_paths(root)
     if not path["requirements"].exists() or not path["approval"].exists():
@@ -699,6 +778,7 @@ def main():
     action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
     action.add_argument("--salvage-only", action="store_true", help="AIを使わず保存済みの不合格セクションを再検査・復元")
     action.add_argument("--restore-demo-photo-ledger", action="store_true", help="第4章の空素材台帳のみを非AIで補完する")
+    action.add_argument("--restore-demo-copy-outline", action="store_true", help="第4章の未復元コピー構成だけをAIなしで補完する")
     args = parser.parse_args()
     try:
         ensure_demo(ROOT)
@@ -718,6 +798,8 @@ def main():
             repair_demo_requirements(ROOT, allow_generation=False)
         elif args.restore_demo_photo_ledger:
             restore_demo_photo_ledger(ROOT)
+        elif args.restore_demo_copy_outline:
+            restore_demo_copy_outline(ROOT)
         else:
             print("保存先：", ROOT)
             for key, val in case_paths(ROOT).items():
