@@ -235,7 +235,7 @@ def audit_claims(text: str, case: dict):
             if not re.search(r"禁止|NG|設置しない|不使用|避け|変更", line):
                 errors.append("行" + str(i) + "：未確認の予約機能をCTAとして指定")
         if re.search(r"生成画像.{0,14}(?:採用|使用|許可|利用|使用可)", line):
-            if re.search(r"(?:のみを?採用|のみ使用|許可する|利用可|使用可|採用可否.{0,8}はい)", line):
+            if re.search(r"(?:のみを?採用|のみ使用|許可する|利用可(?!否)|使用可(?!否)|採用可否.{0,8}はい)", line):
                 if not case.get("assets") and case["authorization"].get("image_rights") == "no-real-images":
                     errors.append("行" + str(i) + "：許可のない生成画像を採用済・使用可と扱っています")
         if re.search(r"税込価格として表示する", line):
