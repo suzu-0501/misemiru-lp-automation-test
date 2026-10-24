@@ -208,6 +208,38 @@ class DetailedSpecTests(unittest.TestCase):
         self.assertTrue(any("具体的な点数" in e for e in errs))
         self.assertTrue(any("減点" in e for e in errs))
 
+    def test_copy_outline_is_truthful_and_complete(self):
+        proposed = dp.demo_copy_outline_template(self.case)
+        self.assertEqual([], dp.audit_claims(proposed, self.case))
+        self.assertTrue(proposed.startswith("## セクション構成・コピー・NG表現"))
+        self.assertIn("NG表現", proposed)
+        self.assertIn("要件", proposed)
+        self.assertIn("未確認", proposed)
+        self.assertNotIn("承認済", proposed)
+
+    def test_copy_outline_restores_without_touching_photo_ledger(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            paths = dp.case_paths(root)
+            dp.save_json(paths["case"], self.case)
+            dp.save_text(paths["requirements"], "previous draft")
+            safe_photo = dp.demo_photo_ledger_template(self.case)
+            dp.save_text(root / "requirements_section_04_2.md", safe_photo)
+            for cid, titles in dp.CHAPTERS["requirements"]:
+                if cid != "04":
+                    content = "\n\n".join(
+                        "## " + title + "\n\n" + "未確認情報は推測しない。人間へ確認を求める。" * 24
+                        for title in titles
+                    )
+                    dp.save_text(root / ("requirements_chapter_" + cid + ".md"), content)
+            with patch.object(dp, "model_reply") as ai:
+                result = dp.restore_demo_copy_outline(root)
+            ai.assert_not_called()
+            self.assertEqual(6, result["chapters"])
+            self.assertEqual("構造・出典検査済／AIレビュー未実施", result["status"])
+            self.assertFalse(paths["approval"].exists())
+            self.assertEqual(safe_photo, (root / "requirements_section_04_2.md").read_text())
+
     def test_deterministic_photo_ledger_has_no_unsupported_approval(self):
         template = dp.demo_photo_ledger_template(self.case)
         self.assertTrue(template.startswith("## 写真と素材台帳"))
