@@ -142,7 +142,7 @@ def only_fictional(case):
 
 def model_reply(system: str, user: str, predict: int = 1800) -> str:
     body = {
-        "model": MODEL, "stream": False, "think": False,
+        "model": MODEL, "stream": True, "think": False,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "options": {"temperature": 0.15, "num_predict": predict, "num_ctx": 8192},
@@ -153,10 +153,12 @@ def model_reply(system: str, user: str, predict: int = 1800) -> str:
     )
     try:
         with urlopen(req, timeout=600) as response:
-            obj = json.load(response)
+            events = [json.loads(line) for line in response if line.strip()]
+            if not events or events[-1].get("done") is not True:
+                raise RuntimeError("Ollamaの出力が未完了のまま中断しました")
     except (HTTPError, URLError, TimeoutError) as e:
         raise RuntimeError("Ollamaへの接続に失敗しました。MacでOllamaを起動してください。") from e
-    answer = obj.get("message", {}).get("content", "").strip()
+    answer = "".join(e.get("message", {}).get("content", "") for e in events).strip()
     if not answer:
         raise RuntimeError("ローカルAIの回答が空でした。")
     return answer
