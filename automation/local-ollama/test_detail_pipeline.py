@@ -67,7 +67,34 @@ class DetailedSpecTests(unittest.TestCase):
             )
         self.assertTrue(issues)
         self.assertNotIn("東京都渋谷区", draft)
-        self.assertEqual(6, m.call_count)
+        self.assertEqual(4, m.call_count)
+
+    def test_cached_section_survives_sibling_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            title = dp.CHAPTERS["requirements"][0][1][0]
+            safe = "## " + title + "\n\n" + ("これは未確認であり、店舗情報は推測しません。" * 20)
+            dp.save_text(root / "requirements_section_01_1.md", safe)
+            with patch.object(dp, "generate_section", return_value=("bad", ["danger"])) as model:
+                draft, issues = dp.build_chapter(
+                    "requirements", dp.CHAPTERS["requirements"][0], self.case, root=root)
+            self.assertIn(safe, draft)
+            self.assertEqual(1, model.call_count)
+            self.assertTrue(issues)
+
+    def test_recover_valid_section_from_rejected_chapter(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            title = dp.CHAPTERS["requirements"][0][1][0]
+            safe = "## " + title + "\n\n" + ("要確認の設計案です。未確認の事実を追加しません。" * 18)
+            dp.save_text(root / "requirements_chapter_01_rejected.txt",
+                         "安全検査で差し戻し\n\n" + safe)
+            with patch.object(dp, "generate_section", return_value=("bad", ["danger"])) as model:
+                draft, issues = dp.build_chapter(
+                    "requirements", dp.CHAPTERS["requirements"][0], self.case, root=root)
+            self.assertIn(safe, draft)
+            self.assertEqual(1, model.call_count)
+            self.assertTrue((root / "requirements_section_01_1.md").exists())
 
     def test_uploaded_draft_false_approval_regression(self):
         sample = (
