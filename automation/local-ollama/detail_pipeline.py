@@ -344,18 +344,39 @@ def generate_section(stage, chapter_id, section_index, title, case, approved_req
 
 def build_chapter(stage, group, case, approved_requirements="", root=None):
     chapter_id, titles = group
-    contents = []
-    errors = []
-    for section_index, title in enumerate(titles, start=1):
-        print("  セクション生成：" + title, flush=True)
-        subsection, problems = generate_section(
-            stage, chapter_id, section_index, title, case, approved_requirements
-        )
-        if problems:
-            errors.extend([title + ": " + x for x in problems])
-            # Exclude unsafe content from the accepted chapter.
-        else:
-            contents.append(subsection)
+    contents, errors = [], []
+    for section_index, title in enumerate(titles, 1):
+        cache = root / (stage + "_section_" + chapter_id + "_" + str(section_index) + ".md") if root else None
+        found = None
+        if cache and cache.exists():
+            candidate = cache.read_text(encoding="utf-8")
+            if candidate.startswith("## " + title + "\n") and len(candidate) >= 250 and not audit_claims(candidate, case):
+                found = candidate
+                print("  合格済みセクションを再利用：" + title, flush=True)
+        if found is None and root:
+            old = root / (stage + "_chapter_" + chapter_id + "_rejected.txt")
+            if old.exists():
+                raw = old.read_text(encoding="utf-8")
+                m = re.search(r"(?m)^## " + re.escape(title) + r"\s*$", raw)
+                if m:
+                    following = re.search(r"(?m)^## ", raw[m.end():])
+                    candidate = raw[m.start():m.end()+following.start()] if following else raw[m.start():]
+                    candidate = candidate.strip() + "\n"
+                    if len(candidate) >= 250 and not audit_claims(candidate, case):
+                        found = candidate
+                        print("  差し戻し記録から合格セクションを復元：" + title, flush=True)
+                        save_text(cache, candidate)
+        if found is None:
+            print("  セクション生成：" + title, flush=True)
+            found, problems = generate_section(stage, chapter_id, section_index, title, case, approved_requirements)
+            if problems:
+                errors.extend([title + ": " + x for x in problems])
+                if cache:
+                    save_text(cache.with_name(cache.stem + "_rejected.txt"), "\n".join(problems) + "\n\n" + found)
+                continue
+            if cache:
+                save_text(cache, found)
+        contents.append(found)
     result = "\n\n".join(contents)
     if not errors:
         errors.extend(check_chapter(result, titles, case))
