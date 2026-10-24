@@ -192,6 +192,34 @@ def check_grounding(text: str, case: dict):
         errors.append("写真・ロゴの許諾を確認済みと断定")
     return sorted(set(errors))
 
+def is_unverified_approval_claim(line: str) -> bool:
+    """Conservative approval-state check, distinguishing policy from fact.
+
+    A sentence like 'use only approved assets' is a condition, not proof that
+    any asset has been approved. A table cell stating 'approved' as a status
+    remains a blocking claim unless supported by explicit approval evidence.
+    """
+    for m in re.finditer(r"承認済", line):
+        before = line[max(0, m.start() - 40):m.start()]
+        after = line[m.end():m.end() + 45]
+        # Explicit negation, question, prohibition or hypothetical.
+        if re.match(r"(?:み)?(?:ではな|でな|と(?:は)?(?:みなさ|断定しな|書かな|扱わな)|かどうか|かは|か否か)", after):
+            continue
+        if re.match(r"(?:み)?(?:と(?:誤認|記載|断定)しない|のように扱わない|ではなく)", after):
+            continue
+        if re.match(r"(?:み)?(?:なら|の場合|であれば|になるまで|になってから|であることを確認してから)", after):
+            continue
+        if re.match(r"(?:み)?(?:の)?(?:素材|写真|画像|ロゴ|文章|文言|データ|アセット|内容|要件|資産)", after):
+            # 'only use approved materials' is a policy, not a fact.
+            if re.search(r"(?:のみ|だけ|に限|を使|を使用|を採用|を公開|である場合|なら|を確認)", after):
+                continue
+        if re.search(r"(?:必要|条件|確認|判定|質問|未確認|禁止|NG|仮定|指示|場合)", before[-17:]) and \
+                re.search(r"(?:か|のみ|だけ|条件|確認|場合|仮定)", after[:22]):
+            continue
+        return True
+    return False
+
+
 def audit_claims(text: str, case: dict):
     """Conservative factual consistency checks, not verification of truth."""
     errors = list(check_grounding(text, case))
@@ -201,7 +229,7 @@ def audit_claims(text: str, case: dict):
             if re.search(r"住所|営業時間|定休日|予約|取り置き|メニュー|写真|画像|ロゴ|権利|利用許可|公開|承認|CTA|税込|出典ID.*全|すべての情報|地図|Instagram", line):
                 if not re.search(r"(?:F001.{0,8}店名|F001.{0,8}仮の店名|店名.{0,15}F001|仮の店名.{0,15}F001)", line):
                     errors.append("行" + str(i) + "：F001は仮の店名のみの根拠。別の主張を裏付けられません")
-        if re.search(r"承認済", line) and not re.search(r"未承認|承認済み?ではな|承認済み?でない", line):
+        if is_unverified_approval_claim(line):
             errors.append("行" + str(i) + "：承認済という主張を裏付ける承認記録がありません")
         if re.search(r"今すぐ予約", line) and re.search(r"主CTA|ボタンを設置", line):
             if not re.search(r"禁止|NG|設置しない|不使用|避け|変更", line):
