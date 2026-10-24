@@ -208,6 +208,38 @@ class DetailedSpecTests(unittest.TestCase):
         self.assertTrue(any("具体的な点数" in e for e in errs))
         self.assertTrue(any("減点" in e for e in errs))
 
+    def test_salvage_only_never_uses_ai(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            p = dp.case_paths(root)
+            dp.save_json(p["case"], self.case)
+            dp.save_text(p["requirements"], "old incomplete draft")
+            dp.save_json(p["req_quality"], {"status": "修正必要", "missing_or_unsafe": ["old"]})
+            with patch.object(dp, "model_reply") as model:
+                result = dp.repair_demo_requirements(root, allow_generation=False)
+            model.assert_not_called()
+            self.assertEqual("修正必要", result["status"])
+            self.assertTrue(list(root.glob("requirements_qa_before_salvage_*.json")))
+
+    def test_salvage_only_marks_ai_review_pending(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            p = dp.case_paths(root)
+            dp.save_json(p["case"], self.case)
+            dp.save_text(p["requirements"], "old draft")
+            for chapter_id, titles in dp.CHAPTERS["requirements"]:
+                chapter = "\n\n".join(
+                    "## " + title + "\n\n" + ("未確認の事実を推測しない。まず担当者に質問する。" * 20)
+                    for title in titles
+                )
+                dp.save_text(root / ("requirements_chapter_" + chapter_id + ".md"), chapter)
+            with patch.object(dp, "model_reply") as model:
+                result = dp.repair_demo_requirements(root, allow_generation=False)
+            model.assert_not_called()
+            self.assertEqual("構造・出典検査済／AIレビュー未実施", result["status"])
+            self.assertTrue(result["review_pending"])
+            self.assertFalse(p["approval"].exists())
+
     def test_repair_creates_backup_and_keeps_approval_absent(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
