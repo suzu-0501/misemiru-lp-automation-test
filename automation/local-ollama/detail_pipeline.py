@@ -319,7 +319,7 @@ def generate_section(stage, chapter_id, section_index, title, case, approved_req
     )
     # Content under each heading should remain a verified draft, not approval.
     prior_issues = []
-    for attempt in range(3):
+    for attempt in range(2):
         prompt = (
             base_prompt +
             "\n注意：見出しはプログラムが付けるため、本文のみ作成してください。" +
@@ -342,7 +342,7 @@ def generate_section(stage, chapter_id, section_index, title, case, approved_req
     return content, prior_issues
 
 
-def build_chapter(stage, group, case, approved_requirements=""):
+def build_chapter(stage, group, case, approved_requirements="", root=None):
     chapter_id, titles = group
     contents = []
     errors = []
@@ -405,7 +405,7 @@ def draft_stage(stage, root: Path):
                 print("検証済みの章を再利用：" + chapter_id, flush=True)
                 continue
         print(stage + " の章を生成：" + chapter_id + " / " + ", ".join(titles), flush=True)
-        result, issues = build_chapter(stage, group, case, approved_requirements)
+        result, issues = build_chapter(stage, group, case, approved_requirements, root)
         if issues:
             issue_map[chapter_id] = issues
             # Unsafe output is NOT added to a publishable draft, but report failures.
