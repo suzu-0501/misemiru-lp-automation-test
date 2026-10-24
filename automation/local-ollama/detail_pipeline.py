@@ -156,8 +156,12 @@ def model_reply(system: str, user: str, predict: int = 1800) -> str:
             events = [json.loads(line) for line in response if line.strip()]
             if not events or events[-1].get("done") is not True:
                 raise RuntimeError("Ollamaの出力が未完了のまま中断しました")
-    except (HTTPError, URLError, TimeoutError) as e:
-        raise RuntimeError("Ollamaへの接続に失敗しました。MacでOllamaを起動してください。") from e
+    except TimeoutError as e:
+        raise RuntimeError("Ollamaが長時間応答せず生成が中断しました。負荷・スリープ・モデルログを確認してください。") from e
+    except HTTPError as e:
+        raise RuntimeError("Ollama HTTPエラー：" + str(e.code) + "。" + str(e.reason)) from e
+    except URLError as e:
+        raise RuntimeError("Ollamaとの通信が切断されました。サーバー停止・タイムアウト・メモリ負荷を確認：" + str(e.reason)) from e
     answer = "".join(e.get("message", {}).get("content", "") for e in events).strip()
     if not answer:
         raise RuntimeError("ローカルAIの回答が空でした。")
