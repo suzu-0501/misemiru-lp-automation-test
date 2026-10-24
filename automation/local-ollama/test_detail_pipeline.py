@@ -102,6 +102,36 @@ class DetailedSpecTests(unittest.TestCase):
             self.assertEqual(1, model.call_count)
             self.assertTrue(issues)
 
+    def test_recover_old_rejected_section_without_ai_calls(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            title_a, title_b = dp.CHAPTERS["requirements"][3][1]
+            safe_a = (
+                "## " + title_a + "\n\n" +
+                "承認済みの素材だけを使用する。これは承認が存在するという事実ではない。\n" +
+                ("未確認の情報は要質問とする。確定の根拠がない事項は使わない。\n" * 15)
+            )
+            safe_b = "## " + title_b + "\n\n" + ("画像権利は未確認、要承認。\n" * 20)
+            dp.save_text(
+                root / "requirements_section_04_1_rejected.txt",
+                "以前の安全検査結果：承認済みの条件表現を誤検出\n\n" + safe_a,
+            )
+            dp.save_text(
+                root / "requirements_section_04_2.md", safe_b
+            )
+            with patch.object(dp, "generate_section") as model:
+                draft, issues = dp.build_chapter(
+                    "requirements", dp.CHAPTERS["requirements"][3],
+                    self.case, root=root
+                )
+            model.assert_not_called()
+            self.assertEqual([], issues)
+            self.assertIn(safe_a, draft)
+            self.assertIn(safe_b, draft)
+            self.assertTrue(
+                (root / "requirements_section_04_1.md").exists()
+            )
+
     def test_recover_valid_section_from_rejected_chapter(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
