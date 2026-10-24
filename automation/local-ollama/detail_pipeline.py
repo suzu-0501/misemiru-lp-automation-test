@@ -400,6 +400,19 @@ def build_chapter(stage, group, case, approved_requirements="", root=None):
                         found = candidate
                         print("  差し戻し記録から合格セクションを復元：" + title, flush=True)
                         save_text(cache, candidate)
+        if found is None and cache:
+            # Re-audit previously rejected output under the CURRENT rules.
+            # The file contains error notes before the real Markdown heading.
+            failed = cache.with_name(cache.stem + "_rejected.txt")
+            if failed.exists():
+                old_text = failed.read_text(encoding="utf-8")
+                match = re.search(r"(?m)^## " + re.escape(title) + r"\s*$", old_text)
+                if match:
+                    candidate = old_text[match.start():].strip() + "\n"
+                    if len(candidate) >= 250 and not audit_claims(candidate, case):
+                        found = candidate
+                        save_text(cache, candidate)
+                        print("  旧差し戻しセクションを再検査して復元：" + title, flush=True)
         if found is None:
             print("  セクション生成：" + title, flush=True)
             found, problems = generate_section(stage, chapter_id, section_index, title, case, approved_requirements)
