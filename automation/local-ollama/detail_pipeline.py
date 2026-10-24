@@ -571,6 +571,75 @@ def repair_demo_requirements(root: Path, allow_generation=True):
     return result
 
 
+def demo_photo_ledger_template(case: dict) -> str:
+    """Deterministic specification for a fictional case with no real assets."""
+    only_fictional(case)
+    if case.get("assets"):
+        raise RuntimeError("実素材が登録された案件には空の素材台帳を適用できません。")
+    if case.get("authorization", {}).get("image_rights") != "no-real-images":
+        raise RuntimeError("画像権利の検証前提が異なります。")
+    return """## 写真と素材台帳
+
+### 現時点の状態と目的
+本書は架空案件の制作工程テスト用であり、実物の店舗写真・人物写真・メニュー画像・ロゴは一切入力されていない。撮影者・著作者・権利者・使用範囲・加工可否・掲載期間・生成画像の利用可否も未確認である。**利用できると判定された素材は0件**であり、次の行は実ファイルの存在を意味しない設計上の候補枠である。外部サイトの画像を転載せず、内容を想像して画像を作らない。
+
+### 候補枠・素材台帳
+| 仮ID | 表示箇所の候補 | 実物 | 権利・提供元 | 利用許可 | 掲載判断 |
+|---|---|---|---|---|---|
+| SLOT-HERO | ファーストビュー | 未登録 | 未確認 | 未確認 | 使用不可 |
+| SLOT-SPACE | 店内・空間紹介 | 未登録 | 未確認 | 未確認 | 使用不可 |
+| SLOT-MENU | 商品・メニュー | 未登録 | 未確認 | 未確認 | 使用不可 |
+| SLOT-LOGO | ロゴ表示 | 未登録 | 未確認 | 未確認 | 使用不可 |
+
+表のIDは予約枠ではなく候補枠である。実物が提供された場合にのみ正式な画像IDを発行し、原本ファイル名、取得元・提供日、著作者、権利者、許諾証跡、利用媒体、加工・トリミング許容範囲、掲載期限、人物や商標の写り込み、確認担当、確認日、版番号、取り下げ条件、代替案を素材ごとに記録する。
+
+### 使用判断と権利管理フロー
+1. 店舗担当者へ原本と権利情報を依頼する。第三者媒体の写真やロゴを無断で転用しない。
+2. 写真、人物、ロゴ、メニュー画像を個別に識別し、著作者・権利者と掲載・加工の許諾範囲を照合する。書面やメール等の証跡がない素材は利用しない。
+3. 肖像権・個人情報・商標が含まれる場合は別途確認する。許諾のある媒体以外へ流用しない。
+4. 生成画像については希望の有無、実写との区別、必要な表示方針と利用条件を個別に確認する。現在は使用許可が不明なので生成・採用しない。
+5. 人間が証跡を確認し採否を決定する。権利や使用可能な範囲が不明な素材は制作候補から外し、採用したという事実を記載しない。
+
+### 代替表示・デザイン引き継ぎ
+画像がないHero・空間・メニュー欄では、店舗の実際の写真だと誤解される仮画像を置かず、単色背景や説明文で構成を検討する。架空の画像URLや壊れた画像参照をHTMLに出力しない。ロゴの許諾が不明な場合も架空ロゴを生成せず、必要に応じて仮の店名を文章として表示する。写真に何が写っているか、料理の外観、内装の特徴を推測しない。
+
+実画像が届いた後に、用途別にPCとモバイルの構図、トリミング可能範囲、視線誘導、文字とのコントラスト、代替テキスト、画像形式と容量、遅延読み込み、読み込み失敗時の表示、取り下げ・差し替え手順を検討する。これらは現時点では制作上の提案であり、実測や店舗確認を終えた仕様ではない。
+
+### 品質確認・実装停止条件
+素材が未登録、出典不明、権利者不明、利用媒体不明、加工可否不明、証跡なし、許可期限切れ、人物・商標の許諾不明の場合は掲載しない。現時点ではすべて未登録であり、写真なしの内部検証用ドラフトとして扱う。顧客への送信、外部公開、権利が不明な画像の採用、デザイン制作の最終確定は、担当者の個別確認と人間の明示的な承認が行われるまで停止する。
+
+### 担当者に確認する質問
+- 店舗から提供可能な写真・ロゴ・メニュー画像と、その原本はあるか。
+- 撮影者と著作者、利用媒体、加工範囲、掲載期限、第三者の写り込みはどうなっているか。
+- Hero、空間、商品画像に優先順位を付けるならどうするか。
+- 生成画像を希望するか。使うなら合成画像である旨をどう示すか。
+- 権利証跡を管理し、差し替えと削除を承認する担当者は誰か。
+"""
+
+
+def restore_demo_photo_ledger(root: Path):
+    """Fill only the absent fictional ledger; NEVER call Ollama."""
+    paths = case_paths(root)
+    case = read_json(paths["case"])
+    only_fictional(case)
+    if paths["approval"].exists() or not paths["requirements"].exists():
+        raise RuntimeError("承認記録があるか、既存ドラフトがないため停止しました。")
+    template = demo_photo_ledger_template(case)
+    if audit_claims(template, case):
+        raise RuntimeError("安全テンプレートの検査に失敗しました。")
+    filename = root / "requirements_section_04_2.md"
+    if filename.exists():
+        old = filename.read_text(encoding="utf-8")
+        if old != template and len(old) > 10:
+            backup = root / ("requirements_section_04_2_previous_" +
+                             datetime.now().strftime("%Y%m%d_%H%M%S") + ".md")
+            save_text(backup, old)
+            print("旧セクションを保存：" + str(backup), flush=True)
+    save_text(filename, template)
+    print("未確認の権利情報を確定せず、第4章の素材台帳を補完しました。", flush=True)
+    return repair_demo_requirements(root, allow_generation=False)
+
+
 def approved_req(root: Path):
     path = case_paths(root)
     if not path["requirements"].exists() or not path["approval"].exists():
@@ -629,6 +698,7 @@ def main():
     action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
     action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
     action.add_argument("--salvage-only", action="store_true", help="AIを使わず保存済みの不合格セクションを再検査・復元")
+    action.add_argument("--restore-demo-photo-ledger", action="store_true", help="第4章の空素材台帳のみを非AIで補完する")
     args = parser.parse_args()
     try:
         ensure_demo(ROOT)
@@ -646,6 +716,8 @@ def main():
             repair_demo_requirements(ROOT)
         elif args.salvage_only:
             repair_demo_requirements(ROOT, allow_generation=False)
+        elif args.restore_demo_photo_ledger:
+            restore_demo_photo_ledger(ROOT)
         else:
             print("保存先：", ROOT)
             for key, val in case_paths(ROOT).items():
