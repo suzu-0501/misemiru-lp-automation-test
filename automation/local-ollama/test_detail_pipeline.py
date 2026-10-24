@@ -116,6 +116,25 @@ class DetailedSpecTests(unittest.TestCase):
             self.assertEqual(1, model.call_count)
             self.assertTrue((root / "requirements_section_01_1.md").exists())
 
+    def test_approval_policy_is_not_an_approval_record(self):
+        safe_examples = [
+            "承認済みの素材だけを使用する。",
+            "承認済の写真のみ採用する。",
+            "画像が承認済の場合のみ公開する。",
+            "画像は承認済ではない。",
+            "承認済かどうかは要確認。",
+            "承認済と誤認しない。",
+        ]
+        for line in safe_examples:
+            with self.subTest(line=line):
+                self.assertFalse(dp.is_unverified_approval_claim(line))
+        self.assertTrue(dp.is_unverified_approval_claim(
+            "| 写真利用許可 | 承認済 | 出典不明 |"
+        ))
+        self.assertTrue(dp.is_unverified_approval_claim(
+            "| デザイン | 承認済み | 根拠未確認 |"
+        ))
+
     def test_uploaded_draft_false_approval_regression(self):
         sample = (
             "| 生成画像の採用可否 | 承認済 | 【F001】 |\n"
