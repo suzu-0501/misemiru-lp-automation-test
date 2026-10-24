@@ -208,6 +208,46 @@ class DetailedSpecTests(unittest.TestCase):
         self.assertTrue(any("具体的な点数" in e for e in errs))
         self.assertTrue(any("減点" in e for e in errs))
 
+    def test_deterministic_photo_ledger_has_no_unsupported_approval(self):
+        template = dp.demo_photo_ledger_template(self.case)
+        self.assertTrue(template.startswith("## 写真と素材台帳"))
+        self.assertEqual([], dp.audit_claims(template, self.case))
+        self.assertIn("未登録", template)
+        self.assertIn("証跡", template)
+        self.assertIn("使用不可", template)
+
+    def test_photo_ledger_refuses_actual_assets(self):
+        case = dict(self.case)
+        case["assets"] = [{"id": "IMG001", "source": "human provided"}]
+        with self.assertRaisesRegex(RuntimeError, "実素材"):
+            dp.demo_photo_ledger_template(case)
+
+    def test_photo_ledger_repairs_only_demo_without_model(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            p = dp.case_paths(root)
+            dp.save_json(p["case"], self.case)
+            dp.save_text(p["requirements"], "existing work that needs a section")
+            for cid, titles in dp.CHAPTERS["requirements"]:
+                if cid == "04":
+                    title = titles[0]
+                    text = "## " + title + "\n\n" + "素材は未確認であり人間の承認が必要です。" * 25
+                    dp.save_text(root / "requirements_section_04_1.md", text)
+                else:
+                    body = "\n\n".join(
+                        "## " + title + "\n\n" + "入力資料が不足するので未確認と記録する。" * 25
+                        for title in titles
+                    )
+                    dp.save_text(root / ("requirements_chapter_" + cid + ".md"), body)
+            with patch.object(dp, "model_reply") as model:
+                result = dp.restore_demo_photo_ledger(root)
+            model.assert_not_called()
+            self.assertEqual(6, result["chapters"])
+            self.assertEqual("構造・出典検査済／AIレビュー未実施", result["status"])
+            self.assertFalse(result["automatic_approval"])
+            self.assertFalse(p["approval"].exists())
+            self.assertTrue((root / "requirements_section_04_2.md").exists())
+
     def test_salvage_only_never_uses_ai(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
