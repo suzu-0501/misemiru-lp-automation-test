@@ -17,7 +17,7 @@ class DetailedSpecTests(unittest.TestCase):
             {"message": {"content": "接続テスト"}, "done": False},
             {"message": {"content": "成功"}, "done": True},
         ]
-        stream = io.BytesIO("".join(json.dumps(m, ensure_ascii=False) + "\\n" for m in messages).encode())
+        stream = io.BytesIO("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in messages).encode())
         with patch.object(dp, "urlopen", return_value=stream) as mock:
             result = dp.model_reply("system", "user", predict=30)
         self.assertEqual("接続テスト成功", result)
@@ -26,7 +26,7 @@ class DetailedSpecTests(unittest.TestCase):
         self.assertFalse(sent["think"])
 
     def test_incomplete_ollama_stream_rejected(self):
-        response = io.BytesIO(b'{"message":{"content":"draft"},"done":false}\\n')
+        response = io.BytesIO(b'{"message":{"content":"draft"},"done":false}\n')
         with patch.object(dp, "urlopen", return_value=response):
             with self.assertRaisesRegex(RuntimeError, "未完了"):
                 dp.model_reply("system", "user")
