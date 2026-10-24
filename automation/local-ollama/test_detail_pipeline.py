@@ -1,5 +1,6 @@
 """Offline tests for detailed LP pipeline. No Ollama or Google connection."""
 import json
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,25 @@ import detail_pipeline as dp
 class DetailedSpecTests(unittest.TestCase):
     def setUp(self):
         self.case = dp.demo_case()
+
+    def test_ollama_streamed_reply(self):
+        messages = [
+            {"message": {"content": "接続テスト"}, "done": False},
+            {"message": {"content": "成功"}, "done": True},
+        ]
+        stream = io.BytesIO("".join(json.dumps(m, ensure_ascii=False) + "\\n" for m in messages).encode())
+        with patch.object(dp, "urlopen", return_value=stream) as mock:
+            result = dp.model_reply("system", "user", predict=30)
+        self.assertEqual("接続テスト成功", result)
+        sent = json.loads(mock.call_args.args[0].data)
+        self.assertTrue(sent["stream"])
+        self.assertFalse(sent["think"])
+
+    def test_incomplete_ollama_stream_rejected(self):
+        response = io.BytesIO(b'{"message":{"content":"draft"},"done":false}\\n')
+        with patch.object(dp, "urlopen", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "未完了"):
+                dp.model_reply("system", "user")
 
     def test_has_staged_specifications(self):
         self.assertEqual(6, len(dp.CHAPTERS["requirements"]))
