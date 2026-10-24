@@ -376,7 +376,7 @@ def generate_section(stage, chapter_id, section_index, title, case, approved_req
     return content, prior_issues
 
 
-def build_chapter(stage, group, case, approved_requirements="", root=None):
+def build_chapter(stage, group, case, approved_requirements="", root=None, allow_generation=True):
     chapter_id, titles = group
     contents, errors = [], []
     for section_index, title in enumerate(titles, 1):
@@ -413,6 +413,10 @@ def build_chapter(stage, group, case, approved_requirements="", root=None):
                         found = candidate
                         save_text(cache, candidate)
                         print("  旧差し戻しセクションを再検査して復元：" + title, flush=True)
+        if found is None and not allow_generation:
+            errors.append("未復元・再生成が必要：" + title)
+            print("  未復元（AIは呼び出さない）：" + title, flush=True)
+            continue
         if found is None:
             print("  セクション生成：" + title, flush=True)
             found, problems = generate_section(stage, chapter_id, section_index, title, case, approved_requirements)
@@ -449,7 +453,7 @@ def evaluate_document(stage, text, case):
                       model_reply(SYSTEM, query, predict=900))
     return "\n\n".join(scores)
 
-def draft_stage(stage, root: Path):
+def draft_stage(stage, root: Path, allow_generation=True):
     path = case_paths(root)
     case = read_json(path["case"])
     only_fictional(case)
@@ -473,7 +477,7 @@ def draft_stage(stage, root: Path):
                 print("検証済みの章を再利用：" + chapter_id, flush=True)
                 continue
         print(stage + " の章を生成：" + chapter_id + " / " + ", ".join(titles), flush=True)
-        result, issues = build_chapter(stage, group, case, approved_requirements, root)
+        result, issues = build_chapter(stage, group, case, approved_requirements, root, allow_generation)
         if issues:
             issue_map[chapter_id] = issues
             # Unsafe output is NOT added to a publishable draft, but report failures.
@@ -511,7 +515,10 @@ def draft_stage(stage, root: Path):
         "version": datetime.now().astimezone().isoformat(),
     }
     qa_file = path["req_quality"] if stage == "requirements" else path["design_quality"]
-    if not all_issues:
+    if not all_issues and not allow_generation:
+        results["status"] = "構造・出典検査済／AIレビュー未実施"
+        results["review_pending"] = True
+    if not all_issues and allow_generation:
         print("自動品質レビューを生成します（これだけでは承認になりません）", flush=True)
         try:
             evaluation = evaluate_document(stage, draft, case)
@@ -530,7 +537,7 @@ def draft_stage(stage, root: Path):
     print("重大な未確認は確認票に残す。自動公開・GitHub変更・Sheets書き込み：なし")
     return results
 
-def repair_demo_requirements(root: Path):
+def repair_demo_requirements(root: Path, allow_generation=True):
     """Back up local artifacts, then selectively regenerate unsafe chapters.
 
     The existing draft is never approved or published by this function.
@@ -556,8 +563,11 @@ def repair_demo_requirements(root: Path):
             if not dest.exists():
                 save_text(dest, candidate.read_text(encoding="utf-8"))
     print("既存ドラフトのバックアップ：" + str(backup_root), flush=True)
-    result = draft_stage("requirements", root)
-    print("再生成後の判定：" + str(result["status"]), flush=True)
+    if not allow_generation and paths["req_quality"].exists():
+        snapshot = root / ("requirements_qa_before_salvage_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".json")
+        save_text(snapshot, paths["req_quality"].read_text(encoding="utf-8"))
+    result = draft_stage("requirements", root, allow_generation=allow_generation)
+    print("再検査後の判定：" + str(result["status"]), flush=True)
     return result
 
 
@@ -618,6 +628,7 @@ def main():
     action.add_argument("--check-model", action="store_true", help="短いローカル生成を新しい通信方式でテスト")
     action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
     action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
+    action.add_argument("--salvage-only", action="store_true", help="AIを使わず保存済みの不合格セクションを再検査・復元")
     args = parser.parse_args()
     try:
         ensure_demo(ROOT)
@@ -633,6 +644,8 @@ def main():
             audit_existing(ROOT)
         elif args.repair_demo_requirements:
             repair_demo_requirements(ROOT)
+        elif args.salvage_only:
+            repair_demo_requirements(ROOT, allow_generation=False)
         else:
             print("保存先：", ROOT)
             for key, val in case_paths(ROOT).items():
