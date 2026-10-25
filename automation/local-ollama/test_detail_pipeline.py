@@ -433,7 +433,7 @@ class DetailedSpecTests(unittest.TestCase):
     def test_reference_guidance_reaches_generation_prompt(self):
         prompt = dp.make_prompt("requirements", dp.CHAPTERS["requirements"][0], self.case)
         self.assertIn("実案件の参考から抽象化", prompt)
-        self.assertIn("企業", dp.REFERENCE_STAGE_GUIDANCE["requirements"])
+        self.assertIn("店舗提供画像", dp.REFERENCE_STAGE_GUIDANCE["requirements"])
         design = dp.make_prompt("design", dp.CHAPTERS["design"][0], self.case, "承認対象ドラフト")
         self.assertIn("PC/スマホ", design)
         self.assertIn("承認対象ドラフト", design)
