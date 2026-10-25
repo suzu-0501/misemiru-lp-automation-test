@@ -304,16 +304,30 @@ def audit_claims(text: str, case: dict):
 def audit_document(stage: str, content: str, case: dict, review_text: str = ""):
     issues = audit_claims(content, case)
     for header in required_headers(stage):
-        if not re.search(r"(?m)^##\s+" + re.escape(header) + r"\s*$", content):
+        if not re.search(r"(?m)^##\\s+" + re.escape(header) + r"\\s*$", content):
             issues.append("必須見出しが不在：" + header)
     if review_text:
         for role in ("PM・運用審査", "Webデザイナー兼フロントエンド審査"):
-            if role not in review_text:
+            block = re.search(
+                r"(?ms)^##\\s+" + re.escape(role) + r"\\s*\\n(.*?)(?=^##\\s+|\\Z)",
+                review_text,
+            )
+            if not block:
                 issues.append("品質レビューの役割が欠落：" + role)
-        if not re.search(r"(?:\d{1,3}\s*/\s*100|\d{1,3}\s*点)", review_text):
-            issues.append("AIレビューに100点満点の具体的な点数がありません")
-        if not re.search(r"(?:減点|重大(?:な)?(?:欠陥|問題)|問題箇所|改善点)", review_text):
-            issues.append("AIレビューに具体的な減点・問題点がありません")
+                continue
+            answer = block.group(1)
+            score = re.search(r"暫定点数\\s*[：:]\\s*(\\d{1,3})\\s*/\\s*100", answer)
+            if not score or int(score.group(1)) > 100:
+                issues.append(role + "：有効な100点満点の具体的な点数がありません")
+            for required in ("重大問題", "減点箇所", "修正案", "未確認事項"):
+                part = re.search(
+                    r"(?ms)^" + re.escape(required) + r"\\s*[：:]\\s*(.*?)(?=^(?:重大問題|減点箇所|修正案|未確認事項)\\s*[：:]|\\Z)",
+                    answer,
+                )
+                if not part or not part.group(1).strip():
+                    issues.append(role + "：" + required + "の具体的な記載がありません")
+            if not re.search(r"(?m)^\\s*[-*]\\s+.+", answer):
+                issues.append(role + "：箇条書きの具体的な指摘がありません")
     return list(dict.fromkeys(issues))
 
 
@@ -355,6 +369,33 @@ def audit_existing(root: Path):
     for issue in issues[:14]:
         print(" - " + issue)
     return report
+
+
+def review_existing(root: Path):
+    """Review the existing fictional draft only; do not regenerate it or publish."""
+    paths = case_paths(root)
+    case = read_json(paths["case"])
+    only_fictional(case)
+    if not paths["requirements"].exists():
+        raise RuntimeError("既存ドラフトがありません")
+    draft = paths["requirements"].read_text(encoding="utf-8")
+    review_text = evaluate_document("requirements", draft, case)
+    issues = audit_document("requirements", draft, case, review_text)
+    if issues:
+        raise RuntimeError("生成したレビューが形式検査に不合格：" + "、".join(issues[:8]))
+    old_review = root / "requirements_ai_reviews.md"
+    if old_review.exists():
+        backup = root / "requirements_ai_reviews_before_retry.md"
+        if not backup.exists():
+            save_text(backup, old_review.read_text(encoding="utf-8"))
+    save_text(old_review, review_text)
+    report = audit_existing(root)
+    report["review_pending"] = False
+    report["review_scope"] = "抜粋に基づく同一モデルのロール別暫定審査。独立した専門家レビューではない"
+    report["automatic_approval"] = False
+    save_json(paths["req_quality"], report)
+    print("要件定義書は変更せず、AI評価のみを再生成しました")
+    print("検査：" + report["status"] + "。顧客への送信・公開・承認：なし")
 
 
 def required_headers(stage: str):
@@ -526,25 +567,60 @@ def build_chapter(stage, group, case, approved_requirements="", root=None, allow
     return result, errors
 
 def evaluate_document(stage, text, case):
-    """Automated critique is advisory; never automatically approve."""
+    """Provisional role-based critique; never an independent quality certification."""
+    # A short extract keeps the local 8B context reliable. It is NOT a full review.
+    sections = re.split(r"(?m)(?=^##\\s+)", text)
+    excerpt = "\\n\\n".join(section[:650] for section in sections if section.strip())[:8500]
     scores = []
-    for role in (("PM・運用審査", "事実／出典／許可／CTA／不足質問／変更管理"),
-                 ("Webデザイナー兼フロントエンド審査",
-                  "セクション設計／レスポンシブ／画像権利／アクセシビリティ／実装可能性")):
-        # The same local model acts in two roles: NOT independent human experts.
-        role_name, focus = role
+    roles = (
+        ("PM・運用審査", "事実・出典・許可・CTA・不足質問・変更管理"),
+        ("Webデザイナー兼フロントエンド審査",
+         "ページ構成・スマートフォン・写真権利・アクセシビリティ・実装可能性"),
+    )
+    for role_name, focus in roles:
         query = (
-            "次の架空LPの" + stage + "ドラフトを厳しく点検してください。\n"
-            "審査役：" + role_name + "。着眼点：" + focus +
-            "\n必ず以下の順で回答：暫定点数：XX/100／重大問題（引用・セクション）／減点箇所（引用と減点）／修正案／未確認事項。"
-            "\n成約LP事例から抽象化した着眼点（参考店舗の表現や事実は転用不可）：" + REFERENCE_STAGE_GUIDANCE[stage] +
-            "\nこれらの点数は合格証明ではなく、人間のレビュー支援情報です。"
-            "\n評価対象：\n" + text[:18000] +
-            "\n資料：\n" + facts_text(case)[:3000]
+            "架空LPの要件定義ドラフトの抜粋を、" + role_name + "として暫定評価してください。\\n"
+            "着眼点：" + focus + "\\n"
+            "抜粋のみの審査であり、全文レビュー・独立審査・実店舗検証ではありません。"
+            "点数は承認を意味しません。確認できないことを推測せず、必ず減点してください。\\n"
+            "出力形式を次の5項目に厳密に合わせ、見出しは変更しないでください。\\n"
+            "暫定点数：75/100\\n"
+            "重大問題：\\n- 第○章／引用「文中の実際の語句」：問題の説明\\n"
+            "減点箇所：\\n- 第○章／引用「文中の実際の語句」：-10点。理由\\n"
+            "修正案：\\n- 修正対象と具体的な修正方針\\n"
+            "未確認事項：\\n- 人間に確認すべき事項\\n"
+            "75は例であり、根拠に基づいて実際の点数を0〜100で出してください。"
+            "重大問題がない場合は「重大問題：\\n- なし」と書いてください。"
+            "減点がないと断言できなければ減点理由を具体的に示してください。\\n"
+            "参考LPの事実を流用してはいけません。参考観点：" +
+            REFERENCE_STAGE_GUIDANCE[stage] + "\\n"
+            "要件定義書の抜粋：\\n" + excerpt + "\\n"
+            "案件の根拠：\\n" + facts_text(case)[:1200]
         )
-        scores.append("## " + role_name + "\n" +
-                      model_reply(SYSTEM, query, predict=900))
-    return "\n\n".join(scores)
+        answer = ""
+        last_issues = []
+        for attempt in range(2):
+            answer = model_reply(SYSTEM, query +
+                                 ("\\n前回の出力形式の不足：" + "、".join(last_issues) +
+                                  "。不足を修正して5項目を全部出力してください。" if last_issues else ""),
+                                 predict=1050)
+            score = re.search(r"暫定点数\\s*[：:]\\s*(\\d{1,3})\\s*/\\s*100", answer)
+            last_issues = []
+            if not score or int(score.group(1)) > 100:
+                last_issues.append("有効な点数")
+            for label in ("重大問題", "減点箇所", "修正案", "未確認事項"):
+                if not re.search(r"(?m)^" + label + r"\\s*[：:]", answer):
+                    last_issues.append(label)
+            if not re.search(r"(?m)^\\s*[-*]\\s+.+", answer):
+                last_issues.append("具体的な箇条書き")
+            if not last_issues:
+                break
+        if last_issues:
+            raise RuntimeError(role_name + "のレビュー形式が不足：" + "、".join(last_issues) +
+                               "。既存ドラフトは保持します")
+        scores.append("## " + role_name + "\\n\\n" + answer)
+    return "\\n\\n".join(scores)
+
 
 def draft_stage(stage, root: Path, allow_generation=True):
     path = case_paths(root)
@@ -873,6 +949,7 @@ def main():
     action.add_argument("--status", action="store_true")
     action.add_argument("--check-model", action="store_true", help="短いローカル生成を新しい通信方式でテスト")
     action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
+    action.add_argument("--review-existing", action="store_true", help="既存ドラフトのAI評価だけを再生成（文章変更なし）")
     action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
     action.add_argument("--salvage-only", action="store_true", help="AIを使わず保存済みの不合格セクションを再検査・復元")
     action.add_argument("--restore-demo-photo-ledger", action="store_true", help="第4章の空素材台帳のみを非AIで補完する")
@@ -890,6 +967,8 @@ def main():
             print("Ollamaストリーミング接続テスト：", model_reply("短く答えてください。", "接続テスト成功とだけ答えてください。", predict=32))
         elif args.audit_existing:
             audit_existing(ROOT)
+        elif args.review_existing:
+            review_existing(ROOT)
         elif args.repair_demo_requirements:
             repair_demo_requirements(ROOT)
         elif args.salvage_only:
