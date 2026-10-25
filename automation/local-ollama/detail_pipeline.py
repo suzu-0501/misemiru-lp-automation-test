@@ -304,29 +304,29 @@ def audit_claims(text: str, case: dict):
 def audit_document(stage: str, content: str, case: dict, review_text: str = ""):
     issues = audit_claims(content, case)
     for header in required_headers(stage):
-        if not re.search(r"(?m)^##\\s+" + re.escape(header) + r"\\s*$", content):
+        if not re.search(r"(?m)^##\s+" + re.escape(header) + r"\s*$", content):
             issues.append("必須見出しが不在：" + header)
     if review_text:
         for role in ("PM・運用審査", "Webデザイナー兼フロントエンド審査"):
             block = re.search(
-                r"(?ms)^##\\s+" + re.escape(role) + r"\\s*\\n(.*?)(?=^##\\s+|\\Z)",
+                r"(?ms)^##\s+" + re.escape(role) + r"\s*\n(.*?)(?=^##\s+|\Z)",
                 review_text,
             )
             if not block:
                 issues.append("品質レビューの役割が欠落：" + role)
                 continue
             answer = block.group(1)
-            score = re.search(r"暫定点数\\s*[：:]\\s*(\\d{1,3})\\s*/\\s*100", answer)
+            score = re.search(r"暫定点数\s*[：:]\s*(\d{1,3})\s*/\s*100", answer)
             if not score or int(score.group(1)) > 100:
                 issues.append(role + "：有効な100点満点の具体的な点数がありません")
             for required in ("重大問題", "減点箇所", "修正案", "未確認事項"):
                 part = re.search(
-                    r"(?ms)^" + re.escape(required) + r"\\s*[：:]\\s*(.*?)(?=^(?:重大問題|減点箇所|修正案|未確認事項)\\s*[：:]|\\Z)",
+                    r"(?ms)^" + re.escape(required) + r"\s*[：:]\s*(.*?)(?=^(?:重大問題|減点箇所|修正案|未確認事項)\s*[：:]|\Z)",
                     answer,
                 )
                 if not part or not part.group(1).strip():
                     issues.append(role + "：" + required + "の具体的な記載がありません")
-            if not re.search(r"(?m)^\\s*[-*]\\s+.+", answer):
+            if not re.search(r"(?m)^\s*[-*]\s+.+", answer):
                 issues.append(role + "：箇条書きの具体的な指摘がありません")
     return list(dict.fromkeys(issues))
 
@@ -569,8 +569,8 @@ def build_chapter(stage, group, case, approved_requirements="", root=None, allow
 def evaluate_document(stage, text, case):
     """Provisional role-based critique; never an independent quality certification."""
     # A short extract keeps the local 8B context reliable. It is NOT a full review.
-    sections = re.split(r"(?m)(?=^##\\s+)", text)
-    excerpt = "\\n\\n".join(section[:650] for section in sections if section.strip())[:8500]
+    sections = re.split(r"(?m)(?=^##\s+)", text)
+    excerpt = "\n\n".join(section[:650] for section in sections if section.strip())[:8500]
     scores = []
     roles = (
         ("PM・運用審査", "事実・出典・許可・CTA・不足質問・変更管理"),
@@ -579,47 +579,47 @@ def evaluate_document(stage, text, case):
     )
     for role_name, focus in roles:
         query = (
-            "架空LPの要件定義ドラフトの抜粋を、" + role_name + "として暫定評価してください。\\n"
-            "着眼点：" + focus + "\\n"
+            "架空LPの要件定義ドラフトの抜粋を、" + role_name + "として暫定評価してください。\n"
+            "着眼点：" + focus + "\n"
             "抜粋のみの審査であり、全文レビュー・独立審査・実店舗検証ではありません。"
-            "点数は承認を意味しません。確認できないことを推測せず、必ず減点してください。\\n"
-            "出力形式を次の5項目に厳密に合わせ、見出しは変更しないでください。\\n"
-            "暫定点数：75/100\\n"
-            "重大問題：\\n- 第○章／引用「文中の実際の語句」：問題の説明\\n"
-            "減点箇所：\\n- 第○章／引用「文中の実際の語句」：-10点。理由\\n"
-            "修正案：\\n- 修正対象と具体的な修正方針\\n"
-            "未確認事項：\\n- 人間に確認すべき事項\\n"
+            "点数は承認を意味しません。確認できないことを推測せず、必ず減点してください。\n"
+            "出力形式を次の5項目に厳密に合わせ、見出しは変更しないでください。\n"
+            "暫定点数：75/100\n"
+            "重大問題：\n- 第○章／引用「文中の実際の語句」：問題の説明\n"
+            "減点箇所：\n- 第○章／引用「文中の実際の語句」：-10点。理由\n"
+            "修正案：\n- 修正対象と具体的な修正方針\n"
+            "未確認事項：\n- 人間に確認すべき事項\n"
             "75は例であり、根拠に基づいて実際の点数を0〜100で出してください。"
-            "重大問題がない場合は「重大問題：\\n- なし」と書いてください。"
-            "減点がないと断言できなければ減点理由を具体的に示してください。\\n"
+            "重大問題がない場合は「重大問題：\n- なし」と書いてください。"
+            "減点がないと断言できなければ減点理由を具体的に示してください。\n"
             "参考LPの事実を流用してはいけません。参考観点：" +
-            REFERENCE_STAGE_GUIDANCE[stage] + "\\n"
-            "要件定義書の抜粋：\\n" + excerpt + "\\n"
-            "案件の根拠：\\n" + facts_text(case)[:1200]
+            REFERENCE_STAGE_GUIDANCE[stage] + "\n"
+            "要件定義書の抜粋：\n" + excerpt + "\n"
+            "案件の根拠：\n" + facts_text(case)[:1200]
         )
         answer = ""
         last_issues = []
         for attempt in range(2):
             answer = model_reply(SYSTEM, query +
-                                 ("\\n前回の出力形式の不足：" + "、".join(last_issues) +
+                                 ("\n前回の出力形式の不足：" + "、".join(last_issues) +
                                   "。不足を修正して5項目を全部出力してください。" if last_issues else ""),
                                  predict=1050)
-            score = re.search(r"暫定点数\\s*[：:]\\s*(\\d{1,3})\\s*/\\s*100", answer)
+            score = re.search(r"暫定点数\s*[：:]\s*(\d{1,3})\s*/\s*100", answer)
             last_issues = []
             if not score or int(score.group(1)) > 100:
                 last_issues.append("有効な点数")
             for label in ("重大問題", "減点箇所", "修正案", "未確認事項"):
-                if not re.search(r"(?m)^" + label + r"\\s*[：:]", answer):
+                if not re.search(r"(?m)^" + label + r"\s*[：:]", answer):
                     last_issues.append(label)
-            if not re.search(r"(?m)^\\s*[-*]\\s+.+", answer):
+            if not re.search(r"(?m)^\s*[-*]\s+.+", answer):
                 last_issues.append("具体的な箇条書き")
             if not last_issues:
                 break
         if last_issues:
             raise RuntimeError(role_name + "のレビュー形式が不足：" + "、".join(last_issues) +
                                "。既存ドラフトは保持します")
-        scores.append("## " + role_name + "\\n\\n" + answer)
-    return "\\n\\n".join(scores)
+        scores.append("## " + role_name + "\n\n" + answer)
+    return "\n\n".join(scores)
 
 
 def draft_stage(stage, root: Path, allow_generation=True):
