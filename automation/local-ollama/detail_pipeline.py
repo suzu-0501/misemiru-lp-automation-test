@@ -85,6 +85,52 @@ GitHub Pagesの公開サブパスを推測しない。内部制作ルールの4�
 営業用の静的サンプルを想定し、本公開・顧客送信・契約・予約導線・デザイン承認を行わない。
 文章は十分な実装可能性を持たせ、具体的な見出しと表で記載する。"""
 
+
+# Abstracted conversion lessons from contracted LP examples. Do not add
+# customer-owned photos, copy, actual prices, or brand assets to this repo.
+REFERENCE_STAGE_GUIDANCE = {
+    "requirements": (
+        "初めての来店者の不安・疑問を特定し、価値→具体的サービス→写真・"
+        "事実に基づく信頼→料金・条件→初回の流れ→アクセス・確認済CTAへ"
+        "つなぐ。セクション順序は業態と情報量で調整し、参考LPをコピーしない。"
+        "料金・キャンペーン・実績・予約可否・公式リンク・更新日は出典IDと"
+        "人間の確認が必要。店舗提供画像であっても媒体・加工・人物の許諾を"
+        "個別に台帳化し、制作途中のデザインを最終仕様と誤認しない。"
+    ),
+    "design": (
+        "参考実績から学ぶのは訴求力・情報階層・写真の使い方・PC/スマホの"
+        "完成度であり、他店の写真・ロゴ・コピー・配色・固有の演出は転用しない。"
+        "Heroに顧客利益を明瞭に示し、主CTA・副CTA、悩みの共感、"
+        "サービス説明、信頼の根拠、料金と初回案内、予約手段を"
+        "自然な視線誘導で結ぶ。各写真にID・出所・許諾・掲載用途・"
+        "PC/SPの比率とトリミング・altを設ける。実写・仮画像・生成画像・"
+        "制作途中の参考画像を混同しない。320/375/390pxで可読性と"
+        "CTAのタップ性を確認し、コントラスト、画像負荷、"
+        "200%ズーム、フォーカス、未接続リンク、正式公開ゲートもQAに含める。"
+    ),
+}
+
+REFERENCE_CHECKS = {
+    "requirements": (
+        ("初来店者と不安", r"初来店|初めて|来店前|不安|ターゲット"),
+        ("独自価値と情報構成", r"価値|魅力|独自|セクション構成"),
+        ("信頼と出典", r"出典|根拠|許諾|実績"),
+        ("料金と条件", r"料金|税込|価格|メニュー"),
+        ("初回案内とアクセス", r"初回|来店|アクセス|利用案内"),
+        ("予約・相談CTA", r"CTA|予約|相談|問い合わせ"),
+        ("写真・ロゴと権利", r"写真|素材|画像|ロゴ|権利"),
+    ),
+    "design": (
+        ("ブランド固有の視覚表現", r"コンセプト|独自|ブランド|アートディレクション"),
+        ("Heroと価値提案", r"Hero|ファーストビュー|H1|見出し"),
+        ("写真台帳とPC/SP構図", r"写真|画像|素材|トリミング|object-position"),
+        ("サービス・価格・CTA導線", r"サービス|価格|料金|CTA|導線"),
+        ("スマホの可読性", r"Mobile|モバイル|スマホ|レスポンシブ|375"),
+        ("アクセシビリティ", r"コントラスト|focus|ズーム|アクセシビリティ"),
+        ("実装と公開前QA", r"QA|検査|承認|公開|チェック"),
+    ),
+}
+
 def demo_case():
     return {
         "id": CASE_ID, "store": "架空喫茶アオ", "fictional": True,
@@ -329,6 +375,46 @@ def facts_text(case):
         "制作許可": case["authorization"],
     }, ensure_ascii=False, indent=2)
 
+
+def reference_quality_report(stage: str, content: str, case: dict) -> dict:
+    """Topic-coverage hints only: NO automatic conversion or asset approval."""
+    only_fictional(case)
+    if stage not in REFERENCE_CHECKS:
+        raise ValueError("未対応の文書種別です")
+    checks = [
+        {
+            "topic": label,
+            "mentioned": bool(re.search(pattern, content, re.IGNORECASE)),
+            "status": (
+                "本文に言及あり・人間が真偽と品質を確認"
+                if re.search(pattern, content, re.IGNORECASE)
+                else "設計・説明を補強する候補"
+            ),
+        }
+        for label, pattern in REFERENCE_CHECKS[stage]
+    ]
+    return {
+        "kind": stage,
+        "status": "人間の品質レビュー待ち",
+        "reference": "契約実績LPから抽象化した構成・デザイン観点のみ",
+        "automatic_approval": False,
+        "customer_assets_included": False,
+        "truth_verified": False,
+        "rights_verified": False,
+        "conversion_verified": False,
+        "publish_allowed": False,
+        "checks": checks,
+        "review_questions": [
+            "訴求はこの店舗の一次資料・実際の悩みに基づくか",
+            "写真・ロゴ・人物・引用の媒体別使用許諾があるか",
+            "制作途中の参考案を完成仕様と取り違えていないか",
+            "料金・税区分・初回案内・公式予約先に最新の根拠があるか",
+            "PCとスマホで写真・文言・CTAが実機確認済みか",
+            "店舗とミセミルWebの人間による最終承認があるか",
+        ],
+        "note": "キーワード検出は品質・真実性の証明ではありません。写真も公開せず、人間の確認まで止めます。",
+    }
+
 def make_prompt(stage, group, case, approved_requirements=""):
     _, titles = group
     exact = "\n".join("## " + t for t in titles)
@@ -341,6 +427,7 @@ def make_prompt(stage, group, case, approved_requirements=""):
         "完全一致のMarkdown H2としてこの順序で出力すること：\n" + exact +
         "\n見出し以外にも、内容がない部分を創作するのではなく、確認事項・条件付き案を記す。"
         "\n品質標準：" + STANDARDS[stage] +
+        "\n実案件の参考から抽象化した品質観点（案件固有の事実ではない）：" + REFERENCE_STAGE_GUIDANCE[stage] +
         "\n案件の事実台帳：" + facts_text(case) + extra +
         "\n明確な未確定・停止条件と、出典IDの参照を含める。"
         "\nこれは正式な承認済み文書ではなく、検証用ドラフトである。"
@@ -445,6 +532,7 @@ def evaluate_document(stage, text, case):
             "次の架空LPの" + stage + "ドラフトを厳しく点検してください。\n"
             "審査役：" + role_name + "。着眼点：" + focus +
             "\n必ず以下の順で回答：暫定点数：XX/100／重大問題（引用・セクション）／減点箇所（引用と減点）／修正案／未確認事項。"
+            "\n成約LP事例から抽象化した着眼点（参考店舗の表現や事実は転用不可）：" + REFERENCE_STAGE_GUIDANCE[stage] +
             "\nこれらの点数は合格証明ではなく、人間のレビュー支援情報です。"
             "\n評価対象：\n" + text[:18000] +
             "\n資料：\n" + facts_text(case)[:3000]
@@ -531,6 +619,11 @@ def draft_stage(stage, root: Path, allow_generation=True):
         except RuntimeError as e:
             results["review_error"] = str(e)
             results["status"] = "修正必要"
+    reference_filename = stage + "_reference_qa.json"
+    reference_report = reference_quality_report(stage, draft, case)
+    save_json(root / reference_filename, reference_report)
+    results["reference_review_file"] = reference_filename
+    results["reference_review_status"] = reference_report["status"]
     save_json(qa_file, results)
     print("ドラフト保存：" + str(out))
     print("検査：" + results["status"])
