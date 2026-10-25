@@ -403,6 +403,10 @@ class DetailedSpecTests(unittest.TestCase):
                 self.assertEqual(16, model.call_count)  # 12 sections once + 2 reviews on each run
             self.assertFalse(dp.case_paths(root)["approval"].exists())
             self.assertFalse(dp.case_paths(root)["design"].exists())
+            review = dp.read_json(root / "requirements_reference_qa.json")
+            self.assertFalse(review["automatic_approval"])
+            self.assertTrue(review["checks"])
+            self.assertEqual("requirements_reference_qa.json", dp.read_json(dp.case_paths(root)["req_quality"])["reference_review_file"])
 
     def test_can_record_human_approval_after_review(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -416,6 +420,39 @@ class DetailedSpecTests(unittest.TestCase):
             with patch("builtins.input", return_value="承認する"):
                 dp.approve_requirements(root)
             self.assertEqual(valid_draft, dp.approved_req(root))
+
+
+    def test_reference_lessons_are_generic_and_do_not_reuse_client_content(self):
+        self.assertIn("初めての来店者", dp.REFERENCE_STAGE_GUIDANCE["requirements"])
+        self.assertIn("PC/スマホ", dp.REFERENCE_STAGE_GUIDANCE["design"])
+        for guide in dp.REFERENCE_STAGE_GUIDANCE.values():
+            self.assertNotIn("LA LEGENDA", guide)
+            self.assertNotIn("星川", guide)
+            self.assertNotIn("¥14,000", guide)
+
+    def test_reference_guidance_reaches_generation_prompt(self):
+        prompt = dp.make_prompt("requirements", dp.CHAPTERS["requirements"][0], self.case)
+        self.assertIn("実案件の参考から抽象化", prompt)
+        self.assertIn("企業", dp.REFERENCE_STAGE_GUIDANCE["requirements"])
+        design = dp.make_prompt("design", dp.CHAPTERS["design"][0], self.case, "承認対象ドラフト")
+        self.assertIn("PC/スマホ", design)
+        self.assertIn("承認対象ドラフト", design)
+
+    def test_reference_review_is_not_an_approval(self):
+        report = dp.reference_quality_report(
+            "design", "Heroの見出し、スマホ向けCTAと写真を検討。", self.case)
+        self.assertEqual("人間の品質レビュー待ち", report["status"])
+        for field in ("automatic_approval", "rights_verified", "conversion_verified",
+                      "truth_verified", "publish_allowed"):
+            self.assertFalse(report[field])
+        self.assertTrue(report["checks"][1]["mentioned"])
+        self.assertFalse(report["checks"][-1]["mentioned"])
+        self.assertTrue(any("人物" in q for q in report["review_questions"]))
+
+    def test_reference_review_does_not_allow_real_cases(self):
+        real = dict(self.case, fictional=False)
+        with self.assertRaises(RuntimeError):
+            dp.reference_quality_report("requirements", "CTA", real)
 
 if __name__ == "__main__":
     unittest.main()
