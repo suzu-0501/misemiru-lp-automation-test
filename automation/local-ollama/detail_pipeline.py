@@ -343,6 +343,11 @@ def audit_existing(root: Path):
         backup = root / "requirements_qa_previous.json"
         if not backup.exists():
             save_text(backup, paths["req_quality"].read_text(encoding="utf-8"))
+    reference_filename = "requirements_reference_qa.json"
+    reference_report = reference_quality_report("requirements", draft, case)
+    save_json(root / reference_filename, reference_report)
+    report["reference_review_file"] = reference_filename
+    report["reference_review_status"] = reference_report["status"]
     save_json(paths["req_quality"], report)
     print("既存ドラフトの再監査完了（AI呼び出し・Sheets・GitHub更新なし）")
     print("判定：" + report["status"] + " / 指摘：" + str(len(issues)) + "件")
