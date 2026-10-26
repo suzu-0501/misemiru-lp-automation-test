@@ -186,13 +186,15 @@ def only_fictional(case):
     if case.get("authorization", {}).get("sample_creation") != "fictional-test-only":
         raise RuntimeError("架空検証用許可が一致しないため処理しません。")
 
-def model_reply(system: str, user: str, predict: int = 1800) -> str:
+def model_reply(system: str, user: str, predict: int = 1800, format_schema=None) -> str:
     body = {
         "model": MODEL, "stream": True, "think": False,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "options": {"temperature": 0.15, "num_predict": predict, "num_ctx": 8192},
     }
+    if format_schema is not None:
+        body["format"] = format_schema
     req = Request(
         API, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json"}, method="POST"
@@ -566,60 +568,106 @@ def build_chapter(stage, group, case, approved_requirements="", root=None, allow
         errors.extend(check_chapter(result, titles, case))
     return result, errors
 
+def _parse_structured_review(raw: str) -> dict:
+    """Validate model-produced review data; never invent omitted judgements."""
+    try:
+        item = json.loads(raw.strip())
+    except json.JSONDecodeError as e:
+        raise ValueError("レビュー結果が有効なJSONではありません") from e
+    labels = ("重大問題", "減点箇所", "修正案", "未確認事項")
+    if not isinstance(item, dict):
+        raise ValueError("レビュー結果がJSONオブジェクトではありません")
+    score = item.get("暫定点数")
+    if type(score) is not int or not 0 <= score <= 100:
+        raise ValueError("暫定点数が0〜100の整数ではありません")
+    result = {"暫定点数": score}
+    for label in labels:
+        values = item.get(label)
+        if not isinstance(values, list) or not values:
+            raise ValueError(label + "の具体的な項目がありません")
+        cleaned = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(label + "に空欄があります")
+            value = " ".join(value.split())
+            if any(token in value for token in ("第○章", "文中の実際の語句", "ここに記入")):
+                raise ValueError(label + "にテンプレートの例文が残っています")
+            if label != "重大問題" and value in ("なし", "特になし", "不明"):
+                raise ValueError(label + "に具体的な評価がありません")
+            cleaned.append(value)
+        result[label] = cleaned
+    return result
+
+
+def _render_structured_review(item: dict) -> str:
+    """Create stable headings for the existing, fail-closed Markdown auditor."""
+    lines = ["暫定点数：" + str(item["暫定点数"]) + "/100"]
+    for label in ("重大問題", "減点箇所", "修正案", "未確認事項"):
+        lines.append(label + "：")
+        lines.extend("- " + value for value in item[label])
+    return "\n".join(lines)
+
+
 def evaluate_document(stage, text, case):
-    """Provisional role-based critique; never an independent quality certification."""
-    # A short extract keeps the local 8B context reliable. It is NOT a full review.
+    """Provisional role critique; structured output is not human certification."""
     sections = re.split(r"(?m)(?=^##\s+)", text)
     excerpt = "\n\n".join(section[:650] for section in sections if section.strip())[:8500]
-    scores = []
     roles = (
         ("PM・運用審査", "事実・出典・許可・CTA・不足質問・変更管理"),
         ("Webデザイナー兼フロントエンド審査",
          "ページ構成・スマートフォン・写真権利・アクセシビリティ・実装可能性"),
     )
+    properties = {
+        "暫定点数": {"type": "integer", "minimum": 0, "maximum": 100}
+    }
+    for label in ("重大問題", "減点箇所", "修正案", "未確認事項"):
+        properties[label] = {
+            "type": "array", "minItems": 1,
+            "items": {"type": "string", "minLength": 2},
+        }
+    review_schema = {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+    reviews = []
     for role_name, focus in roles:
         query = (
-            "架空LPの要件定義ドラフトの抜粋を、" + role_name + "として暫定評価してください。\n"
+            "架空のLP要件定義ドラフトの抜粋を" + role_name + "の観点で厳しく暫定評価してください。\n"
             "着眼点：" + focus + "\n"
-            "抜粋のみの審査であり、全文レビュー・独立審査・実店舗検証ではありません。"
-            "点数は承認を意味しません。確認できないことを推測せず、必ず減点してください。\n"
-            "出力形式を次の5項目に厳密に合わせ、見出しは変更しないでください。\n"
-            "暫定点数：75/100\n"
-            "重大問題：\n- 第○章／引用「文中の実際の語句」：問題の説明\n"
-            "減点箇所：\n- 第○章／引用「文中の実際の語句」：-10点。理由\n"
-            "修正案：\n- 修正対象と具体的な修正方針\n"
-            "未確認事項：\n- 人間に確認すべき事項\n"
-            "75は例であり、根拠に基づいて実際の点数を0〜100で出してください。"
-            "重大問題がない場合は「重大問題：\n- なし」と書いてください。"
-            "減点がないと断言できなければ減点理由を具体的に示してください。\n"
-            "参考LPの事実を流用してはいけません。参考観点：" +
+            "JSONスキーマに従い、暫定点数（整数0〜100）と"
+            "重大問題、減点箇所、修正案、未確認事項（各文字列の配列）を返してください。\n"
+            "重大問題が本当にないときだけ、その配列を[\"なし\"]としてください。\n"
+            "減点箇所には章や本文の実際の語句を挙げ、減点数と理由を記してください。\n"
+            "修正案は変更対象と具体的な対応を記し、未確認事項は人間への質問を書いてください。\n"
+            "テンプレートの例文や架空の出典・確認済み事実は出力しないでください。\n"
+            "これは文書の抜粋だけの同一AIによる自己評価であり、独立レビュー、"
+            "全量検証、店舗確認、権利確認、公開承認には一切なりません。\n"
+            "未確認のものは推測せず、確認不足として減点してください。\n"
+            "参考LPの固有事実や写真を流用しない。参考観点：" +
             REFERENCE_STAGE_GUIDANCE[stage] + "\n"
-            "要件定義書の抜粋：\n" + excerpt + "\n"
+            "ドラフト抜粋：\n" + excerpt + "\n"
             "案件の根拠：\n" + facts_text(case)[:1200]
         )
-        answer = ""
-        last_issues = []
+        last_error = ""
         for attempt in range(2):
-            answer = model_reply(SYSTEM, query +
-                                 ("\n前回の出力形式の不足：" + "、".join(last_issues) +
-                                  "。不足を修正して5項目を全部出力してください。" if last_issues else ""),
-                                 predict=1050)
-            score = re.search(r"暫定点数\s*[：:]\s*(\d{1,3})\s*/\s*100", answer)
-            last_issues = []
-            if not score or int(score.group(1)) > 100:
-                last_issues.append("有効な点数")
-            for label in ("重大問題", "減点箇所", "修正案", "未確認事項"):
-                if not re.search(r"(?m)^" + label + r"\s*[：:]", answer):
-                    last_issues.append(label)
-            if not re.search(r"(?m)^\s*[-*]\s+.+", answer):
-                last_issues.append("具体的な箇条書き")
-            if not last_issues:
-                break
-        if last_issues:
-            raise RuntimeError(role_name + "のレビュー形式が不足：" + "、".join(last_issues) +
-                               "。既存ドラフトは保持します")
-        scores.append("## " + role_name + "\n\n" + answer)
-    return "\n\n".join(scores)
+            feedback = ("\n前回の形式検査の問題：" + last_error +
+                        "。すべてのキーと各配列に実質的な評価を書いてください。" if last_error else "")
+            raw = model_reply(SYSTEM, query + feedback, predict=1050,
+                              format_schema=review_schema)
+            try:
+                parsed = _parse_structured_review(raw)
+            except ValueError as e:
+                last_error = str(e)
+                continue
+            reviews.append("## " + role_name + "\n\n" +
+                           _render_structured_review(parsed))
+            break
+        else:
+            raise RuntimeError(role_name + "の構造化レビューが検査不合格：" +
+                               last_error + "。既存ドラフトは保持します")
+    return "\n\n".join(reviews)
 
 
 def draft_stage(stage, root: Path, allow_generation=True):
