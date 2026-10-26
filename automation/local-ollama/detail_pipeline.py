@@ -573,7 +573,7 @@ def _parse_structured_review(raw: str) -> dict:
     try:
         item = json.loads(raw.strip())
     except json.JSONDecodeError as e:
-        raise ValueError("レビュー結果が有効なJSONではありません") from e
+        raise ValueError("レビュー結果が有効なJSONではありません（" + e.msg + "、位置" + str(e.pos) + "、出力長" + str(len(raw)) + "文字）") from e
     labels = ("重大問題", "減点箇所", "修正案", "未確認事項")
     if not isinstance(item, dict):
         raise ValueError("レビュー結果がJSONオブジェクトではありません")
@@ -622,8 +622,8 @@ def evaluate_document(stage, text, case):
     }
     for label in ("重大問題", "減点箇所", "修正案", "未確認事項"):
         properties[label] = {
-            "type": "array", "minItems": 1,
-            "items": {"type": "string", "minLength": 2},
+            "type": "array", "minItems": 1, "maxItems": 3,
+            "items": {"type": "string", "minLength": 2, "maxLength": 120},
         }
     review_schema = {
         "type": "object",
@@ -638,6 +638,8 @@ def evaluate_document(stage, text, case):
             "着眼点：" + focus + "\n"
             "JSONスキーマに従い、暫定点数（整数0〜100）と"
             "重大問題、減点箇所、修正案、未確認事項（各文字列の配列）を返してください。\n"
+            "各配列は1〜3項目、各項目120文字以内に要約し、実質的な内容を書いてください。\n"
+            "JSONオブジェクト以外の解説やMarkdownコードフェンスは付けないでください。\n"
             "重大問題が本当にないときだけ、その配列を[\"なし\"]としてください。\n"
             "減点箇所には章や本文の実際の語句を挙げ、減点数と理由を記してください。\n"
             "修正案は変更対象と具体的な対応を記し、未確認事項は人間への質問を書いてください。\n"
@@ -654,7 +656,7 @@ def evaluate_document(stage, text, case):
         for attempt in range(2):
             feedback = ("\n前回の形式検査の問題：" + last_error +
                         "。すべてのキーと各配列に実質的な評価を書いてください。" if last_error else "")
-            raw = model_reply(SYSTEM, query + feedback, predict=1050,
+            raw = model_reply(SYSTEM, query + feedback, predict=1900,
                               format_schema=review_schema)
             try:
                 parsed = _parse_structured_review(raw)
