@@ -761,7 +761,8 @@ def draft_stage(stage, root: Path, allow_generation=True, *, internal_preview=Fa
                                  if internal_preview else approved_req(root))
     else:
         approved_requirements = ""
-    output_root = (root / "internal_design_preview") if internal_preview else root
+    output_root = (root / "internal_design_preview" / sha256(approved_requirements)[:12]
+                   if internal_preview else root)
     output_root.mkdir(parents=True, exist_ok=True)
     chunks = []
     issue_map = {}
@@ -824,6 +825,7 @@ def draft_stage(stage, root: Path, allow_generation=True, *, internal_preview=Fa
         results["customer_send_allowed"] = False
         results["automatic_approval"] = False
         results["requirements_sha256"] = sha256(approved_requirements)
+        results["review_actors"] = "未実施（内部デザイン下書き。人間のレビュー・承認も未完了）"
         results["review_pending"] = True
         if not all_issues:
             results["status"] = "内部デザイン下書き・未承認（AI品質レビュー未実施）"
@@ -1105,6 +1107,8 @@ def main():
     action.add_argument("--restore-demo-copy-outline", action="store_true", help="第4章の未復元コピー構成だけをAIなしで補完する")
     args = parser.parse_args()
     try:
+        if args.check_design_preview and not case_paths(ROOT)["case"].exists():
+            raise RuntimeError("検証用case.jsonがありません。読み取り専用検査のため自動作成しません。")
         ensure_demo(ROOT)
         if args.demo_requirements:
             draft_stage("requirements", ROOT)
