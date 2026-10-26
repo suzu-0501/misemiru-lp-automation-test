@@ -5,6 +5,7 @@
 実案件の hitoma サンプルLPに使った **要件定義書v0.5、デザイン定義書v1.2 と同等の詳細度を目標**にする。ただし、実案件固有の店舗情報・写真・ロゴ・配色はコピーしない。設計の章立てと確認プロセスを再利用する。
 
 - 詳細な制作標準：../../quality-templates/requirements-standard.md と ../../quality-templates/design-standard.md
+- 契約実績LPから抽象化した訴求・写真・CTA・レスポンシブの品質基準：./REFERENCE_QUALITY.md（実店舗素材や固有表現は転用しない）
 - Qwen3:8b（Ollama localhost）による章ごとの生成
 - 生成結果の検査と最大1回の自動修正
 - **同じローカルモデル**によるPM視点／デザイナー兼FE視点の自己評価（人間や独立モデルによる監査ではない）
@@ -35,6 +36,7 @@
 - requirements_draft.md （要件定義書・未承認）
 - requirements_qa.json （必須章／根拠チェックの結果）
 - requirements_ai_reviews.md （2ロールのAI自己評価）
+- requirements_reference_qa.json （構成・写真・CTAなどの話題の有無と、人間の確認項目。自動合格ではない）
 - requirements_chapter_XX.md （生成済みの各章）
 - *_rejected.txt （検査で不合格の章。正式な仕様として使用しない）
 
@@ -65,3 +67,11 @@
 ## 補足：機密情報
 
 このGitHubのリポジトリはPublicです。実店舗の未公開資料、店舗から受け取った画像、店舗情報の調査ファイル、OAuth tokens、要件定義書本文をアップロードしないでください。ローカルのDocumentsフォルダで管理してください。
+
+## 保存済み要件の品質観点レビュー（AI生成なし）
+
+```bash
+python3 "$HOME/Downloads/misemiru_detail_pipeline.py" --audit-existing
+```
+
+既存の `requirements_draft.md` は変更せず、`requirements_reference_qa.json` を生成する。元のQAはバックアップ対象になる。キーワード言及の有無だけでは顧客の購買意欲・写真権利・事実・デザイン実機検査は判定できないため、必ず人間がレビューする。

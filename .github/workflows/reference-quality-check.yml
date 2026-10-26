@@ -1,0 +1,22 @@
+name: LP reference quality offline checks
+
+on:
+  pull_request:
+    branches: [feature/local-ollama-bridge]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile LP automation scripts
+        run: python -m py_compile automation/local-ollama/detail_pipeline.py automation/local-ollama/worker.py
+      - name: Run unit regression tests (no Ollama or Sheets)
+        run: python -m unittest discover -s automation/local-ollama -p 'test_*.py' -v
