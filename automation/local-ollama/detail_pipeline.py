@@ -381,7 +381,23 @@ def review_existing(root: Path):
     if not paths["requirements"].exists():
         raise RuntimeError("既存ドラフトがありません")
     draft = paths["requirements"].read_text(encoding="utf-8")
-    review_text = evaluate_document("requirements", draft, case)
+    try:
+        review_text = evaluate_document("requirements", draft, case, cache_dir=root)
+    except RuntimeError as exc:
+        # Never convert a failed / truncated LLM response into approval.
+        # The draft is untouched and a machine-readable blocking QA record
+        # remains for a later retry of only the missing review role.
+        report = audit_existing(root)
+        report["status"] = "AIレビュー未完了"
+        report["review_pending"] = True
+        report["review_error"] = str(exc)
+        report["automatic_approval"] = False
+        report["missing_or_unsafe"] = sorted(set(
+            report.get("missing_or_unsafe", []) + ["AIレビュー未完了：人間の承認は不可"]))
+        save_json(paths["req_quality"], report)
+        print("品質レビューを安全停止しました。既存ドラフトと承認状態は変更しません。")
+        print("原因：" + str(exc))
+        return report
     issues = audit_document("requirements", draft, case, review_text)
     if issues:
         raise RuntimeError("生成したレビューが形式検査に不合格：" + "、".join(issues[:8]))
@@ -398,6 +414,7 @@ def review_existing(root: Path):
     save_json(paths["req_quality"], report)
     print("要件定義書は変更せず、AI評価のみを再生成しました")
     print("検査：" + report["status"] + "。顧客への送信・公開・承認：なし")
+    return report
 
 
 def required_headers(stage: str):
@@ -570,8 +587,14 @@ def build_chapter(stage, group, case, approved_requirements="", root=None, allow
 
 def _parse_structured_review(raw: str) -> dict:
     """Validate model-produced review data; never invent omitted judgements."""
+    payload = raw.strip().lstrip("\ufeff")
+    # Ollama may add a Markdown fence even with a JSON schema. We tolerate
+    # the wrapper only; partial JSON and absent fields remain hard failures.
+    wrapped = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", payload, re.IGNORECASE)
+    if wrapped:
+        payload = wrapped.group(1).strip()
     try:
-        item = json.loads(raw.strip())
+        item = json.loads(payload)
     except json.JSONDecodeError as e:
         raise ValueError("レビュー結果が有効なJSONではありません（" + e.msg + "、位置" + str(e.pos) + "、出力長" + str(len(raw)) + "文字）") from e
     labels = ("重大問題", "減点箇所", "修正案", "未確認事項")
@@ -608,8 +631,8 @@ def _render_structured_review(item: dict) -> str:
     return "\n".join(lines)
 
 
-def evaluate_document(stage, text, case):
-    """Provisional role critique; structured output is not human certification."""
+def evaluate_document(stage, text, case, cache_dir=None):
+    """Provisional role critique; cache only schema-valid reviews for this draft hash."""
     sections = re.split(r"(?m)(?=^##\s+)", text)
     excerpt = "\n\n".join(section[:650] for section in sections if section.strip())[:8500]
     roles = (
@@ -632,7 +655,27 @@ def evaluate_document(stage, text, case):
         "additionalProperties": False,
     }
     reviews = []
+    draft_hash = sha256(text)
     for role_name, focus in roles:
+        # A valid PM result is not discarded when the Web role fails. Cache
+        # entries are tied to the exact draft and revalidated before use.
+        cache_file = None
+        if cache_dir is not None:
+            role_key = "pm" if role_name == "PM・運用審査" else "web"
+            cache_file = cache_dir / (stage + "_ai_review_" + role_key + ".json")
+            if cache_file.exists():
+                try:
+                    saved = read_json(cache_file)
+                    if (saved.get("draft_sha256") == draft_hash and
+                            saved.get("role") == role_name):
+                        validated = _parse_structured_review(
+                            json.dumps(saved.get("review"), ensure_ascii=False))
+                        reviews.append("## " + role_name + "\n\n" +
+                                       _render_structured_review(validated))
+                        print("検査済みAIレビューを再利用：" + role_name, flush=True)
+                        continue
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
         query = (
             "架空のLP要件定義ドラフトの抜粋を" + role_name + "の観点で厳しく暫定評価してください。\n"
             "着眼点：" + focus + "\n"
@@ -663,6 +706,13 @@ def evaluate_document(stage, text, case):
             except ValueError as e:
                 last_error = str(e)
                 continue
+            if cache_file is not None:
+                save_json(cache_file, {
+                    "draft_sha256": draft_hash,
+                    "role": role_name,
+                    "review": parsed,
+                    "automatic_approval": False,
+                })
             reviews.append("## " + role_name + "\n\n" +
                            _render_structured_review(parsed))
             break
@@ -740,7 +790,7 @@ def draft_stage(stage, root: Path, allow_generation=True):
     if not all_issues and allow_generation:
         print("自動品質レビューを生成します（これだけでは承認になりません）", flush=True)
         try:
-            evaluation = evaluate_document(stage, draft, case)
+            evaluation = evaluate_document(stage, draft, case, cache_dir=root)
             save_text(root / (stage + "_ai_reviews.md"), evaluation)
             results["review_file"] = stage + "_ai_reviews.md"
             reviewed_issues = audit_document(stage, draft, case, evaluation)
@@ -749,7 +799,9 @@ def draft_stage(stage, root: Path, allow_generation=True):
                 results["missing_or_unsafe"] = sorted(set(reviewed_issues))
         except RuntimeError as e:
             results["review_error"] = str(e)
-            results["status"] = "修正必要"
+            results["review_pending"] = True
+            results["status"] = "AIレビュー未完了"
+            results["missing_or_unsafe"] = ["AIレビュー未完了：人間の承認は不可"]
     reference_filename = stage + "_reference_qa.json"
     reference_report = reference_quality_report(stage, draft, case)
     save_json(root / reference_filename, reference_report)
@@ -1018,7 +1070,9 @@ def main():
         elif args.audit_existing:
             audit_existing(ROOT)
         elif args.review_existing:
-            review_existing(ROOT)
+            result = review_existing(ROOT)
+            if result.get("review_pending"):
+                return 2
         elif args.repair_demo_requirements:
             repair_demo_requirements(ROOT)
         elif args.salvage_only:
