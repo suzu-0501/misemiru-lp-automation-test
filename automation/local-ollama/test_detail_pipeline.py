@@ -383,9 +383,15 @@ class DetailedSpecTests(unittest.TestCase):
                 dp.approved_req(root)
 
     def test_existing_chapters_resume_and_review_only(self):
-        def fake_model(system, user, predict=1800):
-            if "審査役：" in user:
-                return "暫定点数：50/100。重大問題：事実・権利が未確認。減点箇所：根拠がない。" * 25
+        def fake_model(system, user, predict=1800, format_schema=None):
+            if format_schema is not None:
+                return json.dumps({
+                    "暫定点数": 64,
+                    "重大問題": ["価格と写真の使用許可が未確認"],
+                    "減点箇所": ["第1章の出典台帳が不足（20点減）"],
+                    "修正案": ["店舗の一次資料と許諾記録を確認票に追加する"],
+                    "未確認事項": ["正式な権利許諾の記録はあるか"],
+                }, ensure_ascii=False)
             # The generator now asks for each section's body separately.
             return "これは架空の案件です。確認済みの実店舗情報はありません。" + (
                 "確定できない情報は未確認として質問に残し、"
@@ -400,7 +406,7 @@ class DetailedSpecTests(unittest.TestCase):
                 self.assertEqual(6, first["chapters"])
                 second = dp.draft_stage("requirements", root)
                 self.assertEqual("人間の承認待ち", second["status"])
-                self.assertEqual(16, model.call_count)  # 12 sections once + 2 reviews on each run
+                self.assertEqual(14, model.call_count)  # 12 sections and 2 cached reviews
             self.assertFalse(dp.case_paths(root)["approval"].exists())
             self.assertFalse(dp.case_paths(root)["design"].exists())
             review = dp.read_json(root / "requirements_reference_qa.json")
@@ -453,6 +459,70 @@ class DetailedSpecTests(unittest.TestCase):
         real = dict(self.case, fictional=False)
         with self.assertRaises(RuntimeError):
             dp.reference_quality_report("requirements", "CTA", real)
+
+
+    def test_structured_review_accepts_json_fence_but_rejects_truncation(self):
+        valid = {
+            "暫定点数": 66,
+            "重大問題": ["仮の店名以外に確実な事実がない"],
+            "減点箇所": ["第一章の根拠が不足（34点減）"],
+            "修正案": ["出典を人間が確認する"],
+            "未確認事項": ["写真許可の記録はあるか"],
+        }
+        wrapped = "```json\\n" + json.dumps(valid, ensure_ascii=False) + "\\n```"
+        self.assertEqual(valid, dp._parse_structured_review(wrapped))
+        with self.assertRaisesRegex(ValueError, "有効なJSON"):
+            dp._parse_structured_review('{"暫定点数": 88,')
+        incomplete = dict(valid)
+        del incomplete["未確認事項"]
+        with self.assertRaisesRegex(ValueError, "未確認事項"):
+            dp._parse_structured_review(json.dumps(incomplete, ensure_ascii=False))
+
+    def test_cache_saves_first_role_and_only_retries_missing_role(self):
+        body = ("## 仮の見出し\\n\\n" + "店舗情報は未確認です。\\n" * 20)
+        valid_json = json.dumps({
+            "暫定点数": 63,
+            "重大問題": ["一次情報が未確認"],
+            "減点箇所": ["店舗固有の事実が不足（37点減）"],
+            "修正案": ["人間が出典と許可を照合する"],
+            "未確認事項": ["実店舗の一次資料はあるか"],
+        }, ensure_ascii=False)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            outcomes = [valid_json, '{"bad":', '{"bad":']
+            with patch.object(dp, "model_reply", side_effect=outcomes) as model:
+                with self.assertRaisesRegex(RuntimeError, "構造化レビュー"):
+                    dp.evaluate_document("requirements", body, self.case, cache_dir=root)
+                self.assertEqual(3, model.call_count)
+            self.assertTrue((root / "requirements_ai_review_pm.json").exists())
+            with patch.object(dp, "model_reply", return_value=valid_json) as model:
+                review = dp.evaluate_document("requirements", body, self.case, cache_dir=root)
+                self.assertEqual(1, model.call_count)
+            self.assertIn("## PM・運用審査", review)
+            self.assertIn("## Webデザイナー兼フロントエンド審査", review)
+            with patch.object(dp, "model_reply", return_value=valid_json) as model:
+                dp.evaluate_document("requirements", body, self.case, cache_dir=root)
+                model.assert_not_called()
+            with patch.object(dp, "model_reply", return_value=valid_json) as model:
+                dp.evaluate_document("requirements", body + "差分", self.case, cache_dir=root)
+                self.assertEqual(2, model.call_count)
+
+    def test_review_error_keeps_draft_unapproved(self):
+        draft = ("# 架空検証\\n" +
+                 "\\n".join("## " + h + "\\n未確認。" for h in dp.required_headers("requirements")))
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            paths = dp.case_paths(root)
+            dp.save_json(paths["case"], self.case)
+            dp.save_text(paths["requirements"], draft)
+            with patch.object(dp, "evaluate_document", side_effect=RuntimeError("JSONの形式不良")):
+                report = dp.review_existing(root)
+            self.assertEqual("AIレビュー未完了", report["status"])
+            self.assertTrue(report["review_pending"])
+            self.assertFalse(report["automatic_approval"])
+            self.assertEqual(draft, paths["requirements"].read_text(encoding="utf-8"))
+            self.assertFalse(paths["approval"].exists())
+            self.assertEqual("AIレビュー未完了", dp.read_json(paths["req_quality"])["status"])
 
 if __name__ == "__main__":
     unittest.main()
