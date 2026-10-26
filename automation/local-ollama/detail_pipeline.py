@@ -480,11 +480,13 @@ def reference_quality_report(stage: str, content: str, case: dict) -> dict:
         "note": "キーワード検出は品質・真実性の証明ではありません。写真も公開せず、人間の確認まで止めます。",
     }
 
-def make_prompt(stage, group, case, approved_requirements=""):
+def make_prompt(stage, group, case, approved_requirements="", *, internal_preview=False):
     _, titles = group
     exact = "\n".join("## " + t for t in titles)
     extra = (
-        "\n承認済み要件定義書（事実や運用の正本。長くても以下を優先）：\n" +
+        ("\n未承認の要件定義ドラフト（内部確認用。店舗情報・許可・承認は未検証）：\n"
+         if internal_preview else
+         "\n承認済み要件定義書（事実や運用の正本。長くても以下を優先）：\n") +
         approved_requirements[:14000]
     ) if stage == "design" else ""
     return (
@@ -498,10 +500,11 @@ def make_prompt(stage, group, case, approved_requirements=""):
         "\nこれは正式な承認済み文書ではなく、検証用ドラフトである。"
     )
 
-def generate_section(stage, chapter_id, section_index, title, case, approved_requirements=""):
+def generate_section(stage, chapter_id, section_index, title, case, approved_requirements="", *, internal_preview=False):
     """Generate one section. The program owns its heading; LLM cannot omit it."""
     base_prompt = make_prompt(
-        stage, (chapter_id, (title,)), case, approved_requirements
+        stage, (chapter_id, (title,)), case, approved_requirements,
+        internal_preview=internal_preview
     )
     # Content under each heading should remain a verified draft, not approval.
     prior_issues = []
@@ -528,7 +531,7 @@ def generate_section(stage, chapter_id, section_index, title, case, approved_req
     return content, prior_issues
 
 
-def build_chapter(stage, group, case, approved_requirements="", root=None, allow_generation=True):
+def build_chapter(stage, group, case, approved_requirements="", root=None, allow_generation=True, *, internal_preview=False):
     chapter_id, titles = group
     contents, errors = [], []
     for section_index, title in enumerate(titles, 1):
@@ -571,7 +574,8 @@ def build_chapter(stage, group, case, approved_requirements="", root=None, allow
             continue
         if found is None:
             print("  セクション生成：" + title, flush=True)
-            found, problems = generate_section(stage, chapter_id, section_index, title, case, approved_requirements)
+            found, problems = generate_section(stage, chapter_id, section_index, title, case, approved_requirements,
+                                               internal_preview=internal_preview)
             if problems:
                 errors.extend([title + ": " + x for x in problems])
                 if cache:
@@ -722,22 +726,49 @@ def evaluate_document(stage, text, case, cache_dir=None):
     return "\n\n".join(reviews)
 
 
-def draft_stage(stage, root: Path, allow_generation=True):
+
+def validate_internal_design_preview(root: Path, case: dict) -> str:
+    """Read-only gate. Previewing is NOT evidence of factual or human approval."""
+    only_fictional(case)
+    paths = case_paths(root)
+    if not paths["requirements"].exists() or not paths["req_quality"].exists():
+        raise RuntimeError("保存済みの要件定義書と品質確認結果がありません。内部デザイン案は作成できません。")
+    requirements = paths["requirements"].read_text(encoding="utf-8")
+    quality = read_json(paths["req_quality"])
+    if quality.get("draft_sha256") != sha256(requirements):
+        raise RuntimeError("要件定義書が検査後に変更されています。内部デザイン案の作成を停止します。")
+    if quality.get("missing_or_unsafe") or quality.get("status") not in (
+        "構造検査済・根拠確認待ち", "構造・出典検査済／AIレビュー未実施", "人間の承認待ち"
+    ):
+        raise RuntimeError("要件定義の構造・出典の安全検査が未完了です。内部デザイン案を作成できません。")
+    issues = audit_document("requirements", requirements, case)
+    if issues:
+        raise RuntimeError("要件定義書の再検査に失敗：" + "、".join(issues[:5]))
+    print("内部デザイン案の入力検査：合格（ただし人間の承認・事実確認は未完了）", flush=True)
+    print("参照元の要件定義SHA256：" + sha256(requirements), flush=True)
+    return requirements
+
+
+def draft_stage(stage, root: Path, allow_generation=True, *, internal_preview=False):
     path = case_paths(root)
     case = read_json(path["case"])
     only_fictional(case)
     key = "requirements" if stage == "requirements" else "design"
+    if internal_preview and stage != "design":
+        raise RuntimeError("内部下書きモードはデザイン専用です。")
     if stage == "design":
-        approved_requirements = approved_req(root)
+        approved_requirements = (validate_internal_design_preview(root, case)
+                                 if internal_preview else approved_req(root))
     else:
         approved_requirements = ""
-    root.mkdir(parents=True, exist_ok=True)
+    output_root = (root / "internal_design_preview") if internal_preview else root
+    output_root.mkdir(parents=True, exist_ok=True)
     chunks = []
     issue_map = {}
     # Resume partial chapters after model stop, retaining the prior review status.
     for group in CHAPTERS[stage]:
         chapter_id, titles = group
-        filename = root / (stage + "_chapter_" + chapter_id + ".md")
+        filename = output_root / (stage + "_chapter_" + chapter_id + ".md")
         if filename.exists():
             candidate = filename.read_text(encoding="utf-8")
             issues = check_chapter(candidate, titles, case)
@@ -746,11 +777,12 @@ def draft_stage(stage, root: Path, allow_generation=True):
                 print("検証済みの章を再利用：" + chapter_id, flush=True)
                 continue
         print(stage + " の章を生成：" + chapter_id + " / " + ", ".join(titles), flush=True)
-        result, issues = build_chapter(stage, group, case, approved_requirements, root, allow_generation)
+        result, issues = build_chapter(stage, group, case, approved_requirements, output_root, allow_generation,
+                                       internal_preview=internal_preview)
         if issues:
             issue_map[chapter_id] = issues
             # Unsafe output is NOT added to a publishable draft, but report failures.
-            save_text(root / (stage + "_chapter_" + chapter_id + "_rejected.txt"),
+            save_text(output_root / (stage + "_chapter_" + chapter_id + "_rejected.txt"),
                       "安全検査に不合格。人間の確認が必要です。\n" +
                       "\n".join(issues) + "\n\n" + result)
             print("章 " + chapter_id + " は安全検査で差し戻し", flush=True)
@@ -771,7 +803,8 @@ def draft_stage(stage, root: Path, allow_generation=True):
             all_issues.append("必須見出しが不在：" + header)
     for cid, issues in issue_map.items():
         all_issues.extend(["章" + cid + ": " + x for x in issues])
-    out = path["requirements"] if stage == "requirements" else path["design"]
+    out = (output_root / "design_draft.md" if internal_preview else
+           (path["requirements"] if stage == "requirements" else path["design"]))
     save_text(out, draft)
     results = {
         "kind": stage, "status": "人間の承認待ち" if not all_issues else "修正必要",
@@ -783,11 +816,21 @@ def draft_stage(stage, root: Path, allow_generation=True):
         "review_actors": "同一Qwen3モデルによるロール別自己評価（独立した専門家ではない）",
         "version": datetime.now().astimezone().isoformat(),
     }
-    qa_file = path["req_quality"] if stage == "requirements" else path["design_quality"]
-    if not all_issues and not allow_generation:
+    qa_file = (output_root / "design_qa.json" if internal_preview else
+               (path["req_quality"] if stage == "requirements" else path["design_quality"]))
+    if internal_preview:
+        results["preview_only"] = True
+        results["publish_allowed"] = False
+        results["customer_send_allowed"] = False
+        results["automatic_approval"] = False
+        results["requirements_sha256"] = sha256(approved_requirements)
+        results["review_pending"] = True
+        if not all_issues:
+            results["status"] = "内部デザイン下書き・未承認（AI品質レビュー未実施）"
+    elif not all_issues and not allow_generation:
         results["status"] = "構造・出典検査済／AIレビュー未実施"
         results["review_pending"] = True
-    if not all_issues and allow_generation:
+    if not internal_preview and not all_issues and allow_generation:
         print("自動品質レビューを生成します（これだけでは承認になりません）", flush=True)
         try:
             evaluation = evaluate_document(stage, draft, case, cache_dir=root)
@@ -804,7 +847,7 @@ def draft_stage(stage, root: Path, allow_generation=True):
             results["missing_or_unsafe"] = ["AIレビュー未完了：人間の承認は不可"]
     reference_filename = stage + "_reference_qa.json"
     reference_report = reference_quality_report(stage, draft, case)
-    save_json(root / reference_filename, reference_report)
+    save_json(output_root / reference_filename, reference_report)
     results["reference_review_file"] = reference_filename
     results["reference_review_status"] = reference_report["status"]
     save_json(qa_file, results)
@@ -1048,6 +1091,10 @@ def main():
     action.add_argument("--demo-requirements", action="store_true")
     action.add_argument("--approve-demo-requirements", action="store_true")
     action.add_argument("--demo-design", action="store_true")
+    action.add_argument("--check-design-preview", action="store_true",
+                        help="要件定義ドラフトの内部デザイン案への入力条件を読み取り専用で確認")
+    action.add_argument("--demo-design-preview", action="store_true",
+                        help="正式承認なしで架空案件の内部デザイン下書きだけを隔離生成")
     action.add_argument("--status", action="store_true")
     action.add_argument("--check-model", action="store_true", help="短いローカル生成を新しい通信方式でテスト")
     action.add_argument("--audit-existing", action="store_true", help="既存ドラフトをAIなしで再監査")
@@ -1065,6 +1112,11 @@ def main():
             approve_requirements(ROOT)
         elif args.demo_design:
             draft_stage("design", ROOT)
+        elif args.check_design_preview:
+            validate_internal_design_preview(ROOT, read_json(case_paths(ROOT)["case"]))
+            print("事前検査のみ完了。ファイル変更・AI生成・顧客送信・公開：なし")
+        elif args.demo_design_preview:
+            draft_stage("design", ROOT, internal_preview=True)
         elif args.check_model:
             print("Ollamaストリーミング接続テスト：", model_reply("短く答えてください。", "接続テスト成功とだけ答えてください。", predict=32))
         elif args.audit_existing:
