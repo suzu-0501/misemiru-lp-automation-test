@@ -2,7 +2,7 @@ name: LP reference quality offline checks
 
 on:
   pull_request:
-    branches: [feature/local-ollama-bridge]
+    branches: [feature/local-ollama-bridge, feature/lp-reference-quality-20261025]
   workflow_dispatch:
 
 permissions:
