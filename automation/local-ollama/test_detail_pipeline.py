@@ -469,7 +469,7 @@ class DetailedSpecTests(unittest.TestCase):
             "修正案": ["出典を人間が確認する"],
             "未確認事項": ["写真許可の記録はあるか"],
         }
-        wrapped = "```json\\n" + json.dumps(valid, ensure_ascii=False) + "\\n```"
+        wrapped = "```json\n" + json.dumps(valid, ensure_ascii=False) + "\n```"
         self.assertEqual(valid, dp._parse_structured_review(wrapped))
         with self.assertRaisesRegex(ValueError, "有効なJSON"):
             dp._parse_structured_review('{"暫定点数": 88,')
@@ -479,7 +479,7 @@ class DetailedSpecTests(unittest.TestCase):
             dp._parse_structured_review(json.dumps(incomplete, ensure_ascii=False))
 
     def test_cache_saves_first_role_and_only_retries_missing_role(self):
-        body = ("## 仮の見出し\\n\\n" + "店舗情報は未確認です。\\n" * 20)
+        body = ("## 仮の見出し\n\n" + "店舗情報は未確認です。\n" * 20)
         valid_json = json.dumps({
             "暫定点数": 63,
             "重大問題": ["一次情報が未確認"],
@@ -508,8 +508,8 @@ class DetailedSpecTests(unittest.TestCase):
                 self.assertEqual(2, model.call_count)
 
     def test_review_error_keeps_draft_unapproved(self):
-        draft = ("# 架空検証\\n" +
-                 "\\n".join("## " + h + "\\n未確認。" for h in dp.required_headers("requirements")))
+        draft = ("# 架空検証\n" +
+                 "\n".join("## " + h + "\n未確認。" for h in dp.required_headers("requirements")))
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             paths = dp.case_paths(root)
