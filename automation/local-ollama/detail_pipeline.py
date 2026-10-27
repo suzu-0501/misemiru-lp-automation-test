@@ -1150,6 +1150,18 @@ def main():
         elif args.salvage_only:
             repair_demo_requirements(ROOT, allow_generation=False)
         elif args.salvage_design_preview:
+            # Preserve the exact pre-salvage local draft and QA before rebuilding.
+            case = read_json(case_paths(ROOT)["case"])
+            preview_requirements = validate_internal_design_preview(ROOT, case)
+            preview_dir = ROOT / "internal_design_preview" / sha256(preview_requirements)[:12]
+            backup_dir = preview_dir / "backup_before_salvage"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            for filename in ("design_draft.md", "design_qa.json"):
+                previous = preview_dir / filename
+                archived = backup_dir / filename
+                if previous.is_file() and not archived.exists():
+                    save_text(archived, previous.read_text(encoding="utf-8"))
+            print("復元前バックアップ：" + str(backup_dir), flush=True)
             draft_stage("design", ROOT, allow_generation=False, internal_preview=True)
         elif args.restore_demo_photo_ledger:
             restore_demo_photo_ledger(ROOT)
