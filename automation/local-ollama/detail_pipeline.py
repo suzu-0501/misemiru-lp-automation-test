@@ -1118,6 +1118,7 @@ def main():
     action.add_argument("--review-existing", action="store_true", help="既存ドラフトのAI評価だけを再生成（文章変更なし）")
     action.add_argument("--repair-demo-requirements", action="store_true", help="バックアップ後、不適切な章だけをローカルAIで再生成")
     action.add_argument("--salvage-only", action="store_true", help="AIを使わず保存済みの不合格セクションを再検査・復元")
+    action.add_argument("--salvage-design-preview", action="store_true", help="AIを使わず既存の内部デザイン下書きを再検査・復元")
     action.add_argument("--restore-demo-photo-ledger", action="store_true", help="第4章の空素材台帳のみを非AIで補完する")
     action.add_argument("--restore-demo-copy-outline", action="store_true", help="第4章の未復元コピー構成だけをAIなしで補完する")
     args = parser.parse_args()
@@ -1148,6 +1149,8 @@ def main():
             repair_demo_requirements(ROOT)
         elif args.salvage_only:
             repair_demo_requirements(ROOT, allow_generation=False)
+        elif args.salvage_design_preview:
+            draft_stage("design", ROOT, allow_generation=False, internal_preview=True)
         elif args.restore_demo_photo_ledger:
             restore_demo_photo_ledger(ROOT)
         elif args.restore_demo_copy_outline:
