@@ -221,8 +221,23 @@ def check_grounding(text: str, case: dict):
     It is not a verification of correctness or a substitute for human checking.
     """
     errors = []
-    if re.search(r"(?:シート|公式サイト|食べログ|地図|店舗資料).{0,12}(?:確認済|確認した|調査済)", text):
+    # Do not mistake a prohibition quoting bad phrases for a claim of verification.
+    # Still flag real assertions, including any assertion outside the quotation.
+    source_claim = re.compile(r"(?:シート|公式サイト|食べログ|地図|店舗資料).{0,12}(?:確認済|確認した|調査済)")
+    quoted_phrase = re.compile(r"[『「][^』」\\n]{0,30}(?:確認済|調査済)[』」]")
+    prohibition = re.compile(
+        r"(?:語句|表現|文言|言葉).{0,24}(?:は|を).{0,15}"
+        r"(?:使用し(?:ない|ません)|使わ(?:ない|ず)|出力禁止|使用禁止|禁止|記載しない|一切使用しない|一切使用しません)"
+    )
+    for line in text.splitlines():
+        if not source_claim.search(line):
+            continue
+        if quoted_phrase.search(line) and prohibition.search(line):
+            outside_quotes = re.sub(r"[『「][^』」\\n]*[』」]", "", line)
+            if not source_claim.search(outside_quotes):
+                continue
         errors.append("未参照の出典を確認済みと断定")
+        break
     permitted_ids = {f["id"] for f in case.get("facts", [])}
     for source_id in re.findall(r"【(F\d{3})】", text):
         if source_id not in permitted_ids:
