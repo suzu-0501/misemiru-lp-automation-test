@@ -1,24 +1,27 @@
-name: Deploy GitHub Pages sample
+name: Publish approved LP to GitHub Pages
 
+# Public deployment must be explicitly started by a human.
+# Merging or pushing to main does not publish a site automatically.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      approved:
+        description: "I reviewed the final LP and authorize its public release."
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
+    name: Quality check and static export
+    if: github.ref == 'refs/heads/main' && inputs.approved == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,9 +31,23 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run lint
       - run: GITHUB_PAGES=true npm run build
+      - name: Validate exported site
+        run: test -s out/index.html
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: ./out
+
+  deploy:
+    name: Deploy reviewed static site
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
